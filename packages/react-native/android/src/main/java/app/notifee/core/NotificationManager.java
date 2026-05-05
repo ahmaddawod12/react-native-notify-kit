@@ -171,15 +171,6 @@ class NotificationManager {
             //   2. pressAction has the opt-out sentinel id: user explicitly passed
             //      pressAction: null in JS, so no content intent is created.
             //   3. pressAction is a normal bundle: pass through unchanged.
-            // Resolve the effective pressAction bundle for the content intent.
-            // Three cases:
-            //   1. pressAction is null (absent from bundle, e.g. trigger rehydrated from Room DB
-            //      after app kill): synthesize default { id:'default', launchActivity:'default' }
-            //      so tapping the notification opens the app (defense-in-depth for paths that
-            //      bypass the TS validator).
-            //   2. pressAction has the opt-out sentinel id: user explicitly passed
-            //      pressAction: null in JS, so no content intent is created.
-            //   3. pressAction is a normal bundle: pass through unchanged.
             //
             // pressActionForIntent  → used for creating the launch intent (or null for opt-out)
             // pressActionForExtras  → used in the receiver intent extras (event payload);
