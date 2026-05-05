@@ -34,7 +34,7 @@ See [FLAG_ACTIVITY_BROUGHT_TO_FRONT](https://developer.android.com/reference/and
 
 > **CLEAR_TASK**: `16`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1454](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1454)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1458](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1458)
 
 See [FLAG_ACTIVITY_CLEAR_TASK](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_CLEAR_TASK) on the official Android documentation for more information.
 
@@ -50,11 +50,17 @@ See [FLAG_ACTIVITY_CLEAR_TOP](https://developer.android.com/reference/android/co
 
 ---
 
-### CLEAR_WHEN_TASK_RESET
+### ~~CLEAR_WHEN_TASK_RESET~~
 
 > **CLEAR_WHEN_TASK_RESET**: `11`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1429](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1429)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1433](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1433)
+
+#### Deprecated
+
+Android deprecated `FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET` in API 21.
+Use `AndroidLaunchActivityFlag.NEW_DOCUMENT` for new code. This value remains
+supported for backward compatibility with existing apps and persisted payloads.
 
 See [FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) on the official Android documentation for more information.
 
@@ -84,7 +90,7 @@ See [FLAG_ACTIVITY_FORWARD_RESULT](https://developer.android.com/reference/andro
 
 > **LAUNCH_ADJACENT**: `19`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1469](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1469)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1473](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1473)
 
 See [FLAG_ACTIVITY_LAUNCH_ADJACENT](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_LAUNCH_ADJACENT) on the official Android documentation for more information.
 
@@ -104,7 +110,7 @@ See [FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY](https://developer.android.com/referenc
 
 > **MATCH_EXTERNAL**: `20`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1474](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1474)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1478](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1478)
 
 See [FLAG_ACTIVITY_MATCH_EXTERNAL](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_MATCH_EXTERNAL) on the official Android documentation for more information.
 
@@ -124,7 +130,7 @@ See [FLAG_ACTIVITY_MULTIPLE_TASK](https://developer.android.com/reference/androi
 
 > **NEW_DOCUMENT**: `12`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1434](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1434)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1438](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1438)
 
 See [FLAG_ACTIVITY_NEW_DOCUMENT](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_NEW_DOCUMENT) on the official Android documentation for more information.
 
@@ -144,7 +150,7 @@ See [FLAG_ACTIVITY_NEW_TASK](https://developer.android.com/reference/android/con
 
 > **NO_ANIMATION**: `15`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1449](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1449)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1453](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1453)
 
 See [FLAG_ACTIVITY_NO_ANIMATION](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_NO_ANIMATION) on the official Android documentation for more information.
 
@@ -164,7 +170,7 @@ See [FLAG_ACTIVITY_NO_HISTORY](https://developer.android.com/reference/android/c
 
 > **NO_USER_ACTION**: `13`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1439](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1439)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1443](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1443)
 
 See [FLAG_ACTIVITY_NO_USER_ACTION](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_NO_USER_ACTION) on the official Android documentation for more information.
 
@@ -184,7 +190,7 @@ See [FLAG_ACTIVITY_PREVIOUS_IS_TOP](https://developer.android.com/reference/andr
 
 > **REORDER_TO_FRONT**: `14`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1444](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1444)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1448](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1448)
 
 See [FLAG_ACTIVITY_REORDER_TO_FRONT](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_REORDER_TO_FRONT) on the official Android documentation for more information.
 
@@ -204,7 +210,7 @@ See [FLAG_ACTIVITY_RESET_TASK_IF_NEEDED](https://developer.android.com/reference
 
 > **RETAIN_IN_RECENTS**: `18`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1464](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1464)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1468](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1468)
 
 See [FLAG_ACTIVITY_RETAIN_IN_RECENTS](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_RETAIN_IN_RECENTS) on the official Android documentation for more information.
 
@@ -224,6 +230,6 @@ See [FLAG_ACTIVITY_SINGLE_TOP](https://developer.android.com/reference/android/c
 
 > **TASK_ON_HOME**: `17`
 
-Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1459](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1459)
+Defined in: [packages/react-native/src/types/NotificationAndroid.ts:1463](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/NotificationAndroid.ts#L1463)
 
 See [FLAG_ACTIVITY_TASK_ON_HOME](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_TASK_ON_HOME) on the official Android documentation for more information.

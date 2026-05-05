@@ -1424,6 +1424,10 @@ export enum AndroidLaunchActivityFlag {
   LAUNCHED_FROM_HISTORY = 10,
 
   /**
+   * @deprecated Android deprecated `FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET` in API 21.
+   * Use `AndroidLaunchActivityFlag.NEW_DOCUMENT` for new code. This value remains
+   * supported for backward compatibility with existing apps and persisted payloads.
+   *
    * See [FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET](https://developer.android.com/reference/android/content/Intent.html#FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) on the official Android documentation for more information.
    */
   CLEAR_WHEN_TASK_RESET = 11,
