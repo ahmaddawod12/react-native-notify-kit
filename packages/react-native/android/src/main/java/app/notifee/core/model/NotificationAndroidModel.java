@@ -29,6 +29,7 @@ import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import app.notifee.core.Logger;
+import app.notifee.core.utility.BundleValueReader;
 import app.notifee.core.utility.ObjectUtils;
 import app.notifee.core.utility.ParcelableCompatReader;
 import app.notifee.core.utility.ResourceUtils;
@@ -140,12 +141,8 @@ public class NotificationAndroidModel {
    * @return Integer
    */
   public @Nullable Integer getBadgeIconType() {
-    if (mNotificationAndroidBundle.containsKey("badgeIconType")) {
-
-      return ObjectUtils.getInt(mNotificationAndroidBundle.get("badgeIconType"));
-    }
-
-    return NotificationCompat.BADGE_ICON_LARGE;
+    return BundleValueReader.getIntPreserving(
+        mNotificationAndroidBundle, "badgeIconType", NotificationCompat.BADGE_ICON_LARGE);
   }
 
   /**
@@ -269,11 +266,8 @@ public class NotificationAndroidModel {
    * @return int
    */
   public int getGroupAlertBehaviour() {
-    if (mNotificationAndroidBundle.containsKey("groupAlertBehavior")) {
-      return ObjectUtils.getInt(mNotificationAndroidBundle.get("groupAlertBehavior"));
-    }
-
-    return NotificationCompat.GROUP_ALERT_ALL;
+    return BundleValueReader.getIntPreserving(
+        mNotificationAndroidBundle, "groupAlertBehavior", NotificationCompat.GROUP_ALERT_ALL);
   }
 
   /**
@@ -371,7 +365,7 @@ public class NotificationAndroidModel {
    */
   public Integer getNumber() {
     if (mNotificationAndroidBundle.containsKey("badgeCount")) {
-      return ObjectUtils.getInt(mNotificationAndroidBundle.get("badgeCount"));
+      return BundleValueReader.getIntPreserving(mNotificationAndroidBundle, "badgeCount");
     }
 
     return null;
@@ -472,7 +466,11 @@ public class NotificationAndroidModel {
       return NotificationCompat.PRIORITY_DEFAULT;
     }
 
-    int importance = ObjectUtils.getInt(mNotificationAndroidBundle.get("importance"));
+    int importance =
+        BundleValueReader.getIntPreserving(
+            mNotificationAndroidBundle,
+            "importance",
+            NotificationManagerCompat.IMPORTANCE_DEFAULT);
     switch (importance) {
       case NotificationManagerCompat.IMPORTANCE_HIGH:
         return NotificationCompat.PRIORITY_HIGH;
@@ -610,7 +608,7 @@ public class NotificationAndroidModel {
    */
   public @Nullable Long getTimeoutAfter() {
     if (mNotificationAndroidBundle.containsKey("timeoutAfter")) {
-      return ObjectUtils.getLong(mNotificationAndroidBundle.get("timeoutAfter"));
+      return BundleValueReader.getLongPreserving(mNotificationAndroidBundle, "timeoutAfter");
     }
 
     return null;
@@ -666,11 +664,8 @@ public class NotificationAndroidModel {
    * @return int
    */
   public int getVisibility() {
-    if (mNotificationAndroidBundle.containsKey("visibility")) {
-      return ObjectUtils.getInt(mNotificationAndroidBundle.get("visibility"));
-    }
-
-    return NotificationCompat.VISIBILITY_PRIVATE;
+    return BundleValueReader.getIntPreserving(
+        mNotificationAndroidBundle, "visibility", NotificationCompat.VISIBILITY_PRIVATE);
   }
 
   /**
@@ -679,11 +674,7 @@ public class NotificationAndroidModel {
    * @return long
    */
   public long getTimestamp() {
-    if (mNotificationAndroidBundle.containsKey("timestamp")) {
-      return ObjectUtils.getLong(mNotificationAndroidBundle.get("timestamp"));
-    }
-
-    return -1;
+    return BundleValueReader.getLongPreserving(mNotificationAndroidBundle, "timestamp", -1L);
   }
 
   public static class AndroidProgress {

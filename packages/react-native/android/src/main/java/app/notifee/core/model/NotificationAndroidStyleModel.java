@@ -25,6 +25,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
 import androidx.core.graphics.drawable.IconCompat;
 import app.notifee.core.Logger;
+import app.notifee.core.utility.BundleValueReader;
 import app.notifee.core.utility.ObjectUtils;
 import app.notifee.core.utility.ParcelableCompatReader;
 import app.notifee.core.utility.ResourceUtils;
@@ -115,7 +116,7 @@ public class NotificationAndroidStyleModel {
   @Nullable
   public ListenableFuture<NotificationCompat.Style> getStyleTask(
       ListeningExecutorService lExecutor) {
-    int type = ObjectUtils.getInt(mNotificationAndroidStyleBundle.get("type"));
+    int type = BundleValueReader.getIntPreserving(mNotificationAndroidStyleBundle, "type");
     ListenableFuture<NotificationCompat.Style> styleTask = null;
 
     switch (type) {
