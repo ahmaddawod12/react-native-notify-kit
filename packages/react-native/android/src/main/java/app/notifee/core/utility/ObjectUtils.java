@@ -111,7 +111,7 @@ public class ObjectUtils {
   public static Map<String, Object> bundleToMap(Bundle bundle) throws IllegalArgumentException {
     Map<String, Object> map = new HashMap<>();
     for (String key : bundle.keySet()) {
-      Object value = bundle.get(key);
+      Object value = BundleValueReader.getValue(bundle, key);
       if (value == null) {
         map.put(key, null);
       } else if (value.getClass().isArray()) {
