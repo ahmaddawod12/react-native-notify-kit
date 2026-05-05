@@ -1,7 +1,9 @@
 package app.notifee.core.model;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import android.os.Bundle;
@@ -56,21 +58,23 @@ public class TimestampTriggerModelTest {
   }
 
   @Test
-  public void testBundleValues() {
+  public void repeatFrequency_missingLeavesNonRepeatingDefaults() {
     assertEquals(
         "with no 'repeatFrequency', interval should be -1",
         -1,
         mTimestampTriggerModel.getInterval());
     assertNull(
         "with no 'repeatFrequency', TimeUnit should be null", mTimestampTriggerModel.getTimeUnit());
+    assertNull(
+        "with no 'repeatFrequency', repeat frequency should be null",
+        mTimestampTriggerModel.getRepeatFrequency());
     assertEquals(
         "with no 'repeatFrequency', delay should be 0", 0, mTimestampTriggerModel.getDelay());
+    assertThrows(
+        "with no 'repeatFrequency', timestamp remains null",
+        NullPointerException.class,
+        () -> mTimestampTriggerModel.getTimestamp());
   }
-
-  // Regression tests for the DAILY/WEEKLY/HOURLY rescheduling cycle. Guard the fix for
-  // upstream invertase/notifee#839 (DAILY trigger fails to re-fire from day 2 onwards on
-  // Android) and #875 (DST-safe Calendar.add for repeat frequency) against future refactors
-  // of TimestampTriggerModel.setNextTimestamp().
 
   private TimestampTriggerModel buildRepeatingTrigger(long timestamp, int repeatFrequency) {
     Bundle trigger = new Bundle();
@@ -88,6 +92,42 @@ public class TimestampTriggerModelTest {
     return TimestampTriggerModel.fromBundle(trigger);
   }
 
+  private Bundle buildRepeatingTriggerBundle() {
+    Bundle trigger = new Bundle();
+    trigger.putLong("timestamp", mNow + ONE_DAY_MS);
+    trigger.putInt("repeatFrequency", REPEAT_FREQUENCY_DAILY);
+    return trigger;
+  }
+
+  private TimestampTriggerModel buildTriggerWithRepeatFrequencyValue(Object repeatFrequency) {
+    Bundle trigger = new Bundle();
+    trigger.putLong("timestamp", mNow + ONE_DAY_MS);
+    putBundleValue(trigger, "repeatFrequency", repeatFrequency);
+    return TimestampTriggerModel.fromBundle(trigger);
+  }
+
+  private TimestampTriggerModel buildTriggerWithRepeatIntervalValue(Object repeatInterval) {
+    Bundle trigger = buildRepeatingTriggerBundle();
+    putBundleValue(trigger, "repeatInterval", repeatInterval);
+    return TimestampTriggerModel.fromBundle(trigger);
+  }
+
+  private TimestampTriggerModel buildTriggerWithTimestampValue(Object timestamp) {
+    Bundle trigger = new Bundle();
+    trigger.putInt("repeatFrequency", REPEAT_FREQUENCY_DAILY);
+    putBundleValue(trigger, "timestamp", timestamp);
+    return TimestampTriggerModel.fromBundle(trigger);
+  }
+
+  private TimestampTriggerModel buildTriggerWithAlarmManagerTypeValue(Object type) {
+    Bundle alarmManager = new Bundle();
+    putBundleValue(alarmManager, "type", type);
+
+    Bundle trigger = new Bundle();
+    trigger.putBundle("alarmManager", alarmManager);
+    return TimestampTriggerModel.fromBundle(trigger);
+  }
+
   private long expectedNextTimestamp(long timestamp, int field, int repeatInterval) {
     Calendar cal = Calendar.getInstance();
     cal.setTimeInMillis(timestamp);
@@ -96,6 +136,252 @@ public class TimestampTriggerModelTest {
     }
     return cal.getTimeInMillis();
   }
+
+  private static void putBundleValue(Bundle bundle, String key, Object value) {
+    if (value == null) {
+      bundle.putString(key, null);
+    } else if (value instanceof Integer) {
+      bundle.putInt(key, (Integer) value);
+    } else if (value instanceof Long) {
+      bundle.putLong(key, (Long) value);
+    } else if (value instanceof Float) {
+      bundle.putFloat(key, (Float) value);
+    } else if (value instanceof Double) {
+      bundle.putDouble(key, (Double) value);
+    } else if (value instanceof String) {
+      bundle.putString(key, (String) value);
+    } else if (value instanceof Boolean) {
+      bundle.putBoolean(key, (Boolean) value);
+    } else {
+      throw new IllegalArgumentException("Unsupported bundle test value: " + value.getClass());
+    }
+  }
+
+  @Test
+  public void repeatFrequency_explicitNullUsesHourlyWhenTimestampIsValid() {
+    long timestamp = mNow + ONE_DAY_MS;
+    Bundle trigger = new Bundle();
+    trigger.putLong("timestamp", timestamp);
+    trigger.putString("repeatFrequency", null);
+
+    TimestampTriggerModel model = TimestampTriggerModel.fromBundle(trigger);
+
+    assertEquals(TimestampTriggerModel.HOURLY, model.getRepeatFrequency());
+    assertEquals(1, model.getInterval());
+    assertEquals(TimeUnit.HOURS, model.getTimeUnit());
+    assertEquals(timestamp, model.getTimestamp());
+  }
+
+  @Test
+  public void repeatFrequency_integerValuesMapToCurrentRepeatModes() {
+    TimestampTriggerModel oneTime = buildTriggerWithRepeatFrequencyValue(-1);
+    assertNull(oneTime.getRepeatFrequency());
+    assertEquals(-1, oneTime.getInterval());
+    assertNull(oneTime.getTimeUnit());
+
+    TimestampTriggerModel hourly = buildTriggerWithRepeatFrequencyValue(REPEAT_FREQUENCY_HOURLY);
+    assertEquals(TimestampTriggerModel.HOURLY, hourly.getRepeatFrequency());
+    assertEquals(1, hourly.getInterval());
+    assertEquals(TimeUnit.HOURS, hourly.getTimeUnit());
+
+    TimestampTriggerModel daily = buildTriggerWithRepeatFrequencyValue(REPEAT_FREQUENCY_DAILY);
+    assertEquals(TimestampTriggerModel.DAILY, daily.getRepeatFrequency());
+    assertEquals(1, daily.getInterval());
+    assertEquals(TimeUnit.DAYS, daily.getTimeUnit());
+
+    TimestampTriggerModel weekly = buildTriggerWithRepeatFrequencyValue(REPEAT_FREQUENCY_WEEKLY);
+    assertEquals(TimestampTriggerModel.WEEKLY, weekly.getRepeatFrequency());
+    assertEquals(7, weekly.getInterval());
+    assertEquals(TimeUnit.DAYS, weekly.getTimeUnit());
+
+    TimestampTriggerModel monthly = buildTriggerWithRepeatFrequencyValue(REPEAT_FREQUENCY_MONTHLY);
+    assertEquals(TimestampTriggerModel.MONTHLY, monthly.getRepeatFrequency());
+    assertEquals(-1, monthly.getInterval());
+    assertNull(monthly.getTimeUnit());
+  }
+
+  @Test
+  public void repeatFrequency_truncatesDoubleValue() {
+    TimestampTriggerModel model = buildTriggerWithRepeatFrequencyValue(2.9d);
+
+    assertEquals(TimestampTriggerModel.WEEKLY, model.getRepeatFrequency());
+    assertEquals(7, model.getInterval());
+    assertEquals(TimeUnit.DAYS, model.getTimeUnit());
+  }
+
+  @Test
+  public void repeatFrequency_preservesClassCastForUnsupportedTypes() {
+    assertThrows(
+        ClassCastException.class, () -> buildTriggerWithRepeatFrequencyValue(Long.valueOf(0L)));
+    assertThrows(
+        ClassCastException.class, () -> buildTriggerWithRepeatFrequencyValue(Float.valueOf(0.0f)));
+    assertThrows(ClassCastException.class, () -> buildTriggerWithRepeatFrequencyValue("0"));
+  }
+
+  @Test
+  public void repeatInterval_missingNullAndNonNumberDefaultToOne() {
+    assertEquals(1, TimestampTriggerModel.fromBundle(buildRepeatingTriggerBundle()).getInterval());
+    assertEquals(1, buildTriggerWithRepeatIntervalValue(null).getInterval());
+    assertEquals(1, buildTriggerWithRepeatIntervalValue("2").getInterval());
+  }
+
+  @Test
+  public void repeatInterval_acceptsPositiveIntegralNumbers() {
+    assertEquals(2, buildTriggerWithRepeatIntervalValue(2).getInterval());
+    assertEquals(3, buildTriggerWithRepeatIntervalValue(Long.valueOf(3L)).getInterval());
+    assertEquals(4, buildTriggerWithRepeatIntervalValue(Float.valueOf(4.0f)).getInterval());
+    assertEquals(5, buildTriggerWithRepeatIntervalValue(Double.valueOf(5.0d)).getInterval());
+  }
+
+  @Test
+  public void repeatInterval_rejectsZeroNegativeFractionalNaNInfinityAndOverflow() {
+    assertEquals(1, buildTriggerWithRepeatIntervalValue(0).getInterval());
+    assertEquals(1, buildTriggerWithRepeatIntervalValue(-1).getInterval());
+    assertEquals(1, buildTriggerWithRepeatIntervalValue(1.5d).getInterval());
+    assertEquals(1, buildTriggerWithRepeatIntervalValue(Double.NaN).getInterval());
+    assertEquals(1, buildTriggerWithRepeatIntervalValue(Double.POSITIVE_INFINITY).getInterval());
+    assertEquals(
+        1,
+        buildTriggerWithRepeatIntervalValue(Long.valueOf((long) Integer.MAX_VALUE + 1L))
+            .getInterval());
+  }
+
+  @Test
+  public void timestamp_missingWithRepeatFrequencyThrowsNullPointerException() {
+    Bundle trigger = new Bundle();
+    trigger.putInt("repeatFrequency", REPEAT_FREQUENCY_DAILY);
+
+    assertThrows(NullPointerException.class, () -> TimestampTriggerModel.fromBundle(trigger));
+  }
+
+  @Test
+  public void timestamp_explicitNullWithRepeatFrequencyThrowsNullPointerException() {
+    Bundle trigger = new Bundle();
+    trigger.putInt("repeatFrequency", REPEAT_FREQUENCY_DAILY);
+    trigger.putString("timestamp", null);
+
+    assertThrows(NullPointerException.class, () -> TimestampTriggerModel.fromBundle(trigger));
+  }
+
+  @Test
+  public void timestamp_longValueIsPreserved() {
+    long timestamp = 123456789L;
+
+    TimestampTriggerModel model = buildTriggerWithTimestampValue(timestamp);
+
+    assertEquals(timestamp, model.getTimestamp());
+  }
+
+  @Test
+  public void timestamp_truncatesDoubleValue() {
+    TimestampTriggerModel model = buildTriggerWithTimestampValue(123456789.9d);
+
+    assertEquals(123456789L, model.getTimestamp());
+  }
+
+  @Test
+  public void timestamp_preservesClassCastForUnsupportedTypes() {
+    assertThrows(ClassCastException.class, () -> buildTriggerWithTimestampValue(1));
+    assertThrows(
+        ClassCastException.class, () -> buildTriggerWithTimestampValue(Float.valueOf(1.0f)));
+    assertThrows(ClassCastException.class, () -> buildTriggerWithTimestampValue("123456789"));
+  }
+
+  @Test
+  public void alarmManager_missingKeepsAlarmManagerDisabled() {
+    TimestampTriggerModel model = TimestampTriggerModel.fromBundle(new Bundle());
+
+    assertFalse(model.getWithAlarmManager());
+    assertEquals(TimestampTriggerModel.AlarmType.SET_EXACT, model.getAlarmType());
+  }
+
+  @Test
+  public void alarmManager_nullBundlePreservesCurrentBehavior() {
+    Bundle trigger = new Bundle();
+    trigger.putBundle("alarmManager", null);
+
+    assertThrows(NullPointerException.class, () -> TimestampTriggerModel.fromBundle(trigger));
+  }
+
+  @Test
+  public void alarmManager_missingOrNullTypeDefaultsToSetExactAllowWhileIdle() {
+    Bundle missingTypeAlarmManager = new Bundle();
+    Bundle missingTypeTrigger = new Bundle();
+    missingTypeTrigger.putBundle("alarmManager", missingTypeAlarmManager);
+    TimestampTriggerModel missingTypeModel = TimestampTriggerModel.fromBundle(missingTypeTrigger);
+
+    assertTrue(missingTypeModel.getWithAlarmManager());
+    assertEquals(
+        TimestampTriggerModel.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE,
+        missingTypeModel.getAlarmType());
+
+    Bundle nullTypeAlarmManager = new Bundle();
+    nullTypeAlarmManager.putString("type", null);
+    Bundle nullTypeTrigger = new Bundle();
+    nullTypeTrigger.putBundle("alarmManager", nullTypeAlarmManager);
+    TimestampTriggerModel nullTypeModel = TimestampTriggerModel.fromBundle(nullTypeTrigger);
+
+    assertTrue(nullTypeModel.getWithAlarmManager());
+    assertEquals(
+        TimestampTriggerModel.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE,
+        nullTypeModel.getAlarmType());
+  }
+
+  @Test
+  public void alarmManager_mapsIntegerTypes() {
+    TimestampTriggerModel.AlarmType[] expectedTypes =
+        new TimestampTriggerModel.AlarmType[] {
+          TimestampTriggerModel.AlarmType.SET,
+          TimestampTriggerModel.AlarmType.SET_AND_ALLOW_WHILE_IDLE,
+          TimestampTriggerModel.AlarmType.SET_EXACT,
+          TimestampTriggerModel.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE,
+          TimestampTriggerModel.AlarmType.SET_ALARM_CLOCK
+        };
+
+    for (int type = 0; type < expectedTypes.length; type++) {
+      TimestampTriggerModel model = buildTriggerWithAlarmManagerTypeValue(type);
+
+      assertTrue(model.getWithAlarmManager());
+      assertEquals(expectedTypes[type], model.getAlarmType());
+    }
+  }
+
+  @Test
+  public void alarmManager_truncatesDoubleType() {
+    TimestampTriggerModel model = buildTriggerWithAlarmManagerTypeValue(4.9d);
+
+    assertTrue(model.getWithAlarmManager());
+    assertEquals(TimestampTriggerModel.AlarmType.SET_ALARM_CLOCK, model.getAlarmType());
+  }
+
+  @Test
+  public void alarmManager_preservesClassCastForUnsupportedTypes() {
+    assertThrows(
+        ClassCastException.class, () -> buildTriggerWithAlarmManagerTypeValue(Long.valueOf(3L)));
+    assertThrows(
+        ClassCastException.class, () -> buildTriggerWithAlarmManagerTypeValue(Float.valueOf(3.0f)));
+    assertThrows(ClassCastException.class, () -> buildTriggerWithAlarmManagerTypeValue("3"));
+  }
+
+  @Test
+  public void alarmManager_allowWhileIdleOverridesTypeToSetExactAllowWhileIdle() {
+    Bundle alarmManager = new Bundle();
+    alarmManager.putInt("type", 4);
+    alarmManager.putBoolean("allowWhileIdle", true);
+    Bundle trigger = new Bundle();
+    trigger.putBundle("alarmManager", alarmManager);
+
+    TimestampTriggerModel model = TimestampTriggerModel.fromBundle(trigger);
+
+    assertTrue(model.getWithAlarmManager());
+    assertEquals(
+        TimestampTriggerModel.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE, model.getAlarmType());
+  }
+
+  // Regression tests for the DAILY/WEEKLY/HOURLY rescheduling cycle. Guard the fix for
+  // upstream invertase/notifee#839 (DAILY trigger fails to re-fire from day 2 onwards on
+  // Android) and #875 (DST-safe Calendar.add for repeat frequency) against future refactors
+  // of TimestampTriggerModel.setNextTimestamp().
 
   @Test
   public void repeatingTrigger_withoutRepeatInterval_defaultsToOne() {
