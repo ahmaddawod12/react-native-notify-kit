@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Android**: centralized internal Bundle and Parcelable compatibility reads through `BundleValueReader` and `ParcelableCompatReader`, cleaning up deprecated Android access paths without changing public APIs, JavaScript payloads, scheduling policy, Room persistence, reboot recovery, foreground service behavior, or PendingIntent behavior.
+
+### Fixed
+
+- **Android**: fixed `getChannelGroup()` delegating to the channel API instead of the channel group API.
+
+### Tests
+
+- **Tests**: added Android regression coverage for notification, channel, trigger parser current behavior and manager scheduler paths to preserve existing null, default, coercion, update/delete, and reschedule behavior during the internal reader modernization.
+
 ## [10.2.1] - 2026-04-28
 
 ### Changed

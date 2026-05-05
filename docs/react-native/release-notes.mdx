@@ -5,6 +5,10 @@ description: react-native-notify-kit API releases
 
 ## Unreleased (next release)
 
+- **Android**: internal Bundle/Parcelable reader modernization and deprecation cleanup. No public API, JavaScript payload, scheduling, Room, reboot recovery, foreground service, or PendingIntent behavior changes are intended.
+- **Android**: fixed `getChannelGroup()` delegation to use the channel group API instead of the channel API.
+- **Tests**: expanded Android regression coverage around notification, channel, trigger parsing and manager scheduler paths.
+
 ## [10.2.1] (2026-04-28)
 
 ### Changed
