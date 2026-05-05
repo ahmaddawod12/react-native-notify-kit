@@ -199,7 +199,8 @@ public class NotifeeAlarmManagerCurrentBehaviorTest {
 
   @Test
   public void rescheduleNotification_otherInteger_completesWithoutRoomUpdate() throws Exception {
-    runRescheduleNotificationExpectingNoUpdate(rescheduleTriggerWithType(Integer.valueOf(99), true));
+    runRescheduleNotificationExpectingNoUpdate(
+        rescheduleTriggerWithType(Integer.valueOf(99), true));
   }
 
   @Test
@@ -256,8 +257,7 @@ public class NotifeeAlarmManagerCurrentBehaviorTest {
     String id = "am-type-reboot-" + suffix;
     Bundle triggerBundle = rescheduleTriggerWithType(typeValue, true);
     seedDisplayRow(id, triggerBundle);
-    long originalTimestamp =
-        triggerTimestamp(repo.getWorkDataById(id).get(5, TimeUnit.SECONDS));
+    long originalTimestamp = triggerTimestamp(repo.getWorkDataById(id).get(5, TimeUnit.SECONDS));
 
     runRescheduleNotificationsFromRoom();
 

@@ -260,7 +260,8 @@ public class NotificationAndroidModelTest {
     Bundle validBundle = new Bundle();
     putRawParcelableArrayList(validBundle, "flags", flags);
 
-    assertArrayEquals(new int[] {1, 2}, NotificationAndroidModel.fromBundle(validBundle).getFlags());
+    assertArrayEquals(
+        new int[] {1, 2}, NotificationAndroidModel.fromBundle(validBundle).getFlags());
 
     ArrayList<Object> invalidFlags = new ArrayList<>();
     invalidFlags.add(1L);
@@ -274,7 +275,8 @@ public class NotificationAndroidModelTest {
 
   @Test
   public void vibrationPattern_missingEmptyIntegerAndUnsupportedValues_preserveCurrentBehavior() {
-    assertArrayEquals(new long[0], NotificationAndroidModel.fromBundle(new Bundle()).getVibrationPattern());
+    assertArrayEquals(
+        new long[0], NotificationAndroidModel.fromBundle(new Bundle()).getVibrationPattern());
 
     Bundle emptyBundle = new Bundle();
     putRawParcelableArrayList(emptyBundle, "vibrationPattern", new ArrayList<Integer>());
@@ -302,8 +304,7 @@ public class NotificationAndroidModelTest {
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private static void putRawParcelableArrayList(
-      Bundle bundle, String key, ArrayList<?> arrayList) {
+  private static void putRawParcelableArrayList(Bundle bundle, String key, ArrayList<?> arrayList) {
     bundle.putParcelableArrayList(key, (ArrayList) arrayList);
   }
 }

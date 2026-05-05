@@ -52,7 +52,9 @@ public class NotificationAndroidStyleModelTest {
     Bundle truncatedDoubleBundle = new Bundle();
     truncatedDoubleBundle.putDouble("type", 1.9d);
     NotificationCompat.Style truncatedStyle =
-        NotificationAndroidStyleModel.fromBundle(truncatedDoubleBundle).getStyleTask(executor).get();
+        NotificationAndroidStyleModel.fromBundle(truncatedDoubleBundle)
+            .getStyleTask(executor)
+            .get();
     assertTrue(truncatedStyle instanceof NotificationCompat.BigTextStyle);
   }
 
@@ -147,8 +149,7 @@ public class NotificationAndroidStyleModelTest {
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private static void putRawParcelableArrayList(
-      Bundle bundle, String key, ArrayList<?> arrayList) {
+  private static void putRawParcelableArrayList(Bundle bundle, String key, ArrayList<?> arrayList) {
     bundle.putParcelableArrayList(key, (ArrayList) arrayList);
   }
 }

@@ -102,7 +102,8 @@ public class BundleValueReaderTest {
         NullPointerException.class,
         () -> BundleValueReader.getLongPreserving(bundle, "explicitNull", 42L));
     assertThrows(
-        ClassCastException.class, () -> BundleValueReader.getLongPreserving(bundle, "integer", 42L));
+        ClassCastException.class,
+        () -> BundleValueReader.getLongPreserving(bundle, "integer", 42L));
   }
 
   @Test

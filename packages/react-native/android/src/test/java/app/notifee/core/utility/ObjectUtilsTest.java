@@ -135,8 +135,7 @@ public class ObjectUtilsTest {
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private static void putRawParcelableArrayList(
-      Bundle bundle, String key, ArrayList<?> arrayList) {
+  private static void putRawParcelableArrayList(Bundle bundle, String key, ArrayList<?> arrayList) {
     bundle.putParcelableArrayList(key, (ArrayList) arrayList);
   }
 }

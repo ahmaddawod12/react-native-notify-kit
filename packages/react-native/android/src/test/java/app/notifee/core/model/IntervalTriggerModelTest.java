@@ -66,6 +66,7 @@ public class IntervalTriggerModelTest {
     Bundle bundle = new Bundle();
     bundle.putString("interval", "15");
 
-    assertThrows(ClassCastException.class, () -> IntervalTriggerModel.fromBundle(bundle).getInterval());
+    assertThrows(
+        ClassCastException.class, () -> IntervalTriggerModel.fromBundle(bundle).getInterval());
   }
 }

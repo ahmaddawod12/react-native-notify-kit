@@ -33,7 +33,8 @@ public class ChannelModelTest {
     integerBundle.putInt("visibility", NotificationCompat.VISIBILITY_SECRET);
     ChannelModel integerModel = ChannelModel.fromBundle(integerBundle);
 
-    assertEquals(NotificationManagerCompat.IMPORTANCE_HIGH, integerModel.getImportance().intValue());
+    assertEquals(
+        NotificationManagerCompat.IMPORTANCE_HIGH, integerModel.getImportance().intValue());
     assertEquals(NotificationCompat.VISIBILITY_SECRET, integerModel.getVisibility());
 
     Bundle doubleBundle = new Bundle();
@@ -83,7 +84,8 @@ public class ChannelModelTest {
     Bundle validBundle = new Bundle();
     putRawParcelableArrayList(validBundle, "vibrationPattern", vibrationPattern);
 
-    assertArrayEquals(new long[] {100L, 200L}, ChannelModel.fromBundle(validBundle).getVibrationPattern());
+    assertArrayEquals(
+        new long[] {100L, 200L}, ChannelModel.fromBundle(validBundle).getVibrationPattern());
 
     ArrayList<Object> invalidPattern = new ArrayList<>();
     invalidPattern.add(100L);
@@ -109,8 +111,7 @@ public class ChannelModelTest {
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private static void putRawParcelableArrayList(
-      Bundle bundle, String key, ArrayList<?> arrayList) {
+  private static void putRawParcelableArrayList(Bundle bundle, String key, ArrayList<?> arrayList) {
     bundle.putParcelableArrayList(key, (ArrayList) arrayList);
   }
 }

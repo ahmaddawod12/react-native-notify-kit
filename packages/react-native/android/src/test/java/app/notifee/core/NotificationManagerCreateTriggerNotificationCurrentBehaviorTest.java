@@ -63,7 +63,8 @@ public class NotificationManagerCreateTriggerNotificationCurrentBehaviorTest {
   public void createTriggerNotification_missingType_dispatchesTimestampBranch() throws Exception {
     Bundle triggerBundle = new Bundle();
 
-    assertCompletes(NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
+    assertCompletes(
+        NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
 
     verifyTimestampBranch(triggerBundle);
     verifyIntervalBranchNeverCalled();
@@ -75,7 +76,8 @@ public class NotificationManagerCreateTriggerNotificationCurrentBehaviorTest {
     Bundle triggerBundle = new Bundle();
     triggerBundle.putString("type", null);
 
-    assertCompletes(NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
+    assertCompletes(
+        NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
 
     verifyTimestampBranch(triggerBundle);
     verifyIntervalBranchNeverCalled();
@@ -85,7 +87,8 @@ public class NotificationManagerCreateTriggerNotificationCurrentBehaviorTest {
   public void createTriggerNotification_integerZero_dispatchesTimestampBranch() throws Exception {
     Bundle triggerBundle = triggerBundleWithType(Integer.valueOf(0));
 
-    assertCompletes(NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
+    assertCompletes(
+        NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
 
     verifyTimestampBranch(triggerBundle);
     verifyIntervalBranchNeverCalled();
@@ -95,7 +98,8 @@ public class NotificationManagerCreateTriggerNotificationCurrentBehaviorTest {
   public void createTriggerNotification_integerOne_dispatchesIntervalBranch() throws Exception {
     Bundle triggerBundle = triggerBundleWithType(Integer.valueOf(1));
 
-    assertCompletes(NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
+    assertCompletes(
+        NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
 
     verifyIntervalBranch(triggerBundle);
     verifyTimestampBranchNeverCalled();
@@ -105,7 +109,8 @@ public class NotificationManagerCreateTriggerNotificationCurrentBehaviorTest {
   public void createTriggerNotification_otherInteger_completesWithoutScheduling() throws Exception {
     Bundle triggerBundle = triggerBundleWithType(Integer.valueOf(99));
 
-    assertCompletes(NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
+    assertCompletes(
+        NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
 
     verifyTimestampBranchNeverCalled();
     verifyIntervalBranchNeverCalled();
@@ -115,7 +120,8 @@ public class NotificationManagerCreateTriggerNotificationCurrentBehaviorTest {
   public void createTriggerNotification_doubleType_truncatesBeforeDispatch() throws Exception {
     Bundle triggerBundle = triggerBundleWithType(Double.valueOf(1.9d));
 
-    assertCompletes(NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
+    assertCompletes(
+        NotificationManager.createTriggerNotification(notificationModel, triggerBundle));
 
     verifyIntervalBranch(triggerBundle);
     verifyTimestampBranchNeverCalled();

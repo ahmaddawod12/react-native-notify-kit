@@ -471,9 +471,7 @@ public class NotificationAndroidModel {
 
     int importance =
         BundleValueReader.getIntPreserving(
-            mNotificationAndroidBundle,
-            "importance",
-            NotificationManagerCompat.IMPORTANCE_DEFAULT);
+            mNotificationAndroidBundle, "importance", NotificationManagerCompat.IMPORTANCE_DEFAULT);
     switch (importance) {
       case NotificationManagerCompat.IMPORTANCE_HIGH:
         return NotificationCompat.PRIORITY_HIGH;

@@ -106,7 +106,8 @@ public class NotificationManagerPressActionOptOutTest {
 
   private static Notification displayNotification(NotificationModel notificationModel)
       throws Exception {
-    ListenableFuture<Void> future = NotificationManager.displayNotification(notificationModel, null);
+    ListenableFuture<Void> future =
+        NotificationManager.displayNotification(notificationModel, null);
     future.get(5, TimeUnit.SECONDS);
 
     Context context = RuntimeEnvironment.getApplication();

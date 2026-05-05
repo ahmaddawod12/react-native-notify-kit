@@ -25,9 +25,9 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
-import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 
@@ -80,15 +80,16 @@ public class HeadlessTaskReactHostTest {
         "ReactContext listener should be removed after initialization",
         0,
         application.reactHost.listeners.size());
-    Shadows.shadowOf(Looper.getMainLooper()).idleFor(499, java.util.concurrent.TimeUnit.MILLISECONDS);
-    verify(appRegistry, never()).startHeadlessTask(anyInt(), any(String.class), any(WritableMap.class));
+    Shadows.shadowOf(Looper.getMainLooper())
+        .idleFor(499, java.util.concurrent.TimeUnit.MILLISECONDS);
+    verify(appRegistry, never())
+        .startHeadlessTask(anyInt(), any(String.class), any(WritableMap.class));
 
     Shadows.shadowOf(Looper.getMainLooper()).idleFor(1, java.util.concurrent.TimeUnit.MILLISECONDS);
 
     ArgumentCaptor<Integer> taskIdCaptor = ArgumentCaptor.forClass(Integer.class);
     verify(appRegistry)
-        .startHeadlessTask(
-            taskIdCaptor.capture(), eq("test-headless-task"), same(copiedParams));
+        .startHeadlessTask(taskIdCaptor.capture(), eq("test-headless-task"), same(copiedParams));
     assertEquals(taskIdCaptor.getValue().intValue(), taskConfig.getReactTaskId());
     assertEquals(
         "source payload should be copied into the queued task",

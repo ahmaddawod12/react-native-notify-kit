@@ -92,7 +92,8 @@ public class NotificationReceiverHandlerInitialNotificationTest {
     assertNotNull(
         "Android 12+ handler currently posts InitialNotificationEvent for no-launch ACTION_PRESS",
         initialNotificationEvent);
-    assertEquals("handler-action-no-launch", initialNotificationEvent.getNotificationModel().getId());
+    assertEquals(
+        "handler-action-no-launch", initialNotificationEvent.getNotificationModel().getId());
     assertPressAction(initialNotificationEvent.getExtras(), "reply", null, null);
   }
 

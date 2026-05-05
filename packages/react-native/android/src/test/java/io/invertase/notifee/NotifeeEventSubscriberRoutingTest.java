@@ -30,9 +30,9 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.MockedStatic;
+import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
-import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
@@ -76,8 +76,8 @@ public class NotifeeEventSubscriberRoutingTest {
     WritableMap notificationMap = mock(WritableMap.class);
     WritableMap pressActionMap = mock(WritableMap.class);
 
-    try (MockedStatic<Arguments> arguments = mockArguments(
-        eventMap, detailMap, notificationMap, pressActionMap)) {
+    try (MockedStatic<Arguments> arguments =
+        mockArguments(eventMap, detailMap, notificationMap, pressActionMap)) {
       new NotifeeEventSubscriber().onNotificationEvent(buildPressEvent("routing-foreground"));
     }
 
@@ -90,7 +90,8 @@ public class NotifeeEventSubscriberRoutingTest {
     verify(emitter).emit(NotifeeEventSubscriber.NOTIFICATION_EVENT_KEY, eventMap);
     verify(eventMap, never()).copy();
     assertEquals("foreground routing must not queue a headless task", 0, taskQueueSize());
-    assertEquals("foreground routing must not start ReactHost", 0, application.reactHost.startCalls);
+    assertEquals(
+        "foreground routing must not start ReactHost", 0, application.reactHost.startCalls);
   }
 
   @Test
@@ -111,8 +112,8 @@ public class NotifeeEventSubscriberRoutingTest {
     WritableMap pressActionMap = mock(WritableMap.class);
     when(eventMap.copy()).thenReturn(queuedEventMap);
 
-    try (MockedStatic<Arguments> arguments = mockArguments(
-        eventMap, detailMap, notificationMap, pressActionMap)) {
+    try (MockedStatic<Arguments> arguments =
+        mockArguments(eventMap, detailMap, notificationMap, pressActionMap)) {
       new NotifeeEventSubscriber().onNotificationEvent(buildPressEvent("routing-background"));
     }
 
@@ -128,11 +129,18 @@ public class NotifeeEventSubscriberRoutingTest {
 
     assertEquals("background routing should queue exactly one headless task", 1, taskQueueSize());
     HeadlessTask.TaskConfig queuedTask = headlessTaskQueue().get(0);
-    assertEquals(NotifeeEventSubscriber.NOTIFICATION_EVENT_KEY, queuedTask.getTaskConfig().getTaskKey());
+    assertEquals(
+        NotifeeEventSubscriber.NOTIFICATION_EVENT_KEY, queuedTask.getTaskConfig().getTaskKey());
     assertEquals(60000L, queuedTask.getTaskConfig().getTimeout());
     assertSame(queuedEventMap, queuedTask.getTaskConfig().getData());
-    assertEquals("background routing should initialize ReactHost via reflection", 1, application.reactHost.startCalls);
-    assertEquals("background routing should register one ReactContext listener", 1, application.reactHost.listeners.size());
+    assertEquals(
+        "background routing should initialize ReactHost via reflection",
+        1,
+        application.reactHost.startCalls);
+    assertEquals(
+        "background routing should register one ReactContext listener",
+        1,
+        application.reactHost.listeners.size());
   }
 
   private static MockedStatic<Arguments> mockArguments(
@@ -142,7 +150,8 @@ public class NotifeeEventSubscriberRoutingTest {
       WritableMap pressActionMap) {
     MockedStatic<Arguments> arguments = mockStatic(Arguments.class);
     arguments.when(Arguments::createMap).thenReturn(eventMap, detailMap);
-    arguments.when(() -> Arguments.fromBundle(any(Bundle.class)))
+    arguments
+        .when(() -> Arguments.fromBundle(any(Bundle.class)))
         .thenReturn(notificationMap, pressActionMap);
     return arguments;
   }
