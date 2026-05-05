@@ -169,8 +169,7 @@ class NotificationManager {
             //      so tapping the notification opens the app (defense-in-depth for paths that
             //      bypass the TS validator).
             //   2. pressAction has the opt-out sentinel id: user explicitly passed
-            //      pressAction: null in JS — pass null to createIntent so no launch intent
-            //      is created (non-tappable notification).
+            //      pressAction: null in JS, so no content intent is created.
             //   3. pressAction is a normal bundle: pass through unchanged.
             // Resolve the effective pressAction bundle for the content intent.
             // Three cases:
@@ -179,8 +178,7 @@ class NotificationManager {
             //      so tapping the notification opens the app (defense-in-depth for paths that
             //      bypass the TS validator).
             //   2. pressAction has the opt-out sentinel id: user explicitly passed
-            //      pressAction: null in JS — pass null to createIntent so no launch intent
-            //      is created (non-tappable notification).
+            //      pressAction: null in JS, so no content intent is created.
             //   3. pressAction is a normal bundle: pass through unchanged.
             //
             // pressActionForIntent  → used for creating the launch intent (or null for opt-out)
@@ -206,23 +204,25 @@ class NotificationManager {
 
             int targetSdkVersion =
                 ContextHolder.getApplicationContext().getApplicationInfo().targetSdkVersion;
-            if (targetSdkVersion >= Build.VERSION_CODES.S
-                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-              builder.setContentIntent(
-                  NotificationPendingIntent.createIntent(
-                      notificationModel.getHashCode(),
-                      pressActionForIntent,
-                      TYPE_PRESS,
-                      new String[] {"notification", "pressAction"},
-                      notificationModel.toBundle(),
-                      pressActionForExtras));
-            } else {
-              builder.setContentIntent(
-                  ReceiverService.createIntent(
-                      ReceiverService.PRESS_INTENT,
-                      new String[] {"notification", "pressAction"},
-                      notificationModel.toBundle(),
-                      pressActionForIntent));
+            if (pressActionForIntent != null) {
+              if (targetSdkVersion >= Build.VERSION_CODES.S
+                  && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setContentIntent(
+                    NotificationPendingIntent.createIntent(
+                        notificationModel.getHashCode(),
+                        pressActionForIntent,
+                        TYPE_PRESS,
+                        new String[] {"notification", "pressAction"},
+                        notificationModel.toBundle(),
+                        pressActionForExtras));
+              } else {
+                builder.setContentIntent(
+                    ReceiverService.createIntent(
+                        ReceiverService.PRESS_INTENT,
+                        new String[] {"notification", "pressAction"},
+                        notificationModel.toBundle(),
+                        pressActionForIntent));
+              }
             }
 
             if (notificationModel.getTitle() != null) {
