@@ -6,6 +6,7 @@ IOS_DEVICE_ID="${IOS_DEVICE_ID:-}"
 IOS_BUNDLE_ID="${IOS_BUNDLE_ID:-org.reactjs.native.example.NotifeeExample}"
 SMOKE_TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-30}"
 SMOKE_LAUNCH_TIMEOUT_SECONDS="${SMOKE_LAUNCH_TIMEOUT_SECONDS:-15}"
+SMOKE_TERMINATE_GRACE_SECONDS="${SMOKE_TERMINATE_GRACE_SECONDS:-2}"
 XCRUN="${XCRUN:-xcrun}"
 
 EXIT_SMOKE_FAIL=1
@@ -41,6 +42,7 @@ Environment:
   IOS_BUNDLE_ID=$IOS_BUNDLE_ID
   SMOKE_TIMEOUT_SECONDS=$SMOKE_TIMEOUT_SECONDS
   SMOKE_LAUNCH_TIMEOUT_SECONDS=$SMOKE_LAUNCH_TIMEOUT_SECONDS
+  SMOKE_TERMINATE_GRACE_SECONDS=$SMOKE_TERMINATE_GRACE_SECONDS
   XCRUN=$XCRUN
 
 Exit codes:
@@ -296,6 +298,8 @@ function waitConsole(args) {
   }
 
   const timeoutSeconds = parsePositiveInteger(timeoutArg, 30);
+  const terminateGraceSeconds = parsePositiveInteger(process.env.SMOKE_TERMINATE_GRACE_SECONDS, 2);
+  const terminateGraceMs = terminateGraceSeconds * 1000;
   const expected = {
     scenario,
     id: expectedId || '',
@@ -321,9 +325,24 @@ function waitConsole(args) {
   console.log(`[smoke-ios-device-e2e] waiting for SMOKE:RESULT ${describeExpected(expected)} timeout=${timeoutSeconds}s`);
 
   let finished = false;
+  let childClosed = false;
+  let exitAfterChildClose = null;
+  let terminateGraceTimer = null;
+  let forceExitTimer = null;
   const child = spawn(xcrun, launchArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+
+  function clearTerminationTimers() {
+    if (terminateGraceTimer != null) {
+      clearTimeout(terminateGraceTimer);
+      terminateGraceTimer = null;
+    }
+    if (forceExitTimer != null) {
+      clearTimeout(forceExitTimer);
+      forceExitTimer = null;
+    }
+  }
 
   function finish(code) {
     if (finished) {
@@ -333,16 +352,32 @@ function waitConsole(args) {
     finished = true;
     clearTimeout(timer);
 
-    if (child.exitCode == null && !child.killed) {
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (child.exitCode == null && !child.killed) {
-          child.kill('SIGKILL');
-        }
-      }, 1000).unref();
+    const exitWithCode = () => {
+      clearTerminationTimers();
+      process.exit(code);
+    };
+
+    if (childClosed || child.exitCode !== null) {
+      exitWithCode();
+      return;
     }
 
-    setTimeout(() => process.exit(code), 50);
+    exitAfterChildClose = exitWithCode;
+    child.kill('SIGTERM');
+
+    terminateGraceTimer = setTimeout(() => {
+      terminateGraceTimer = null;
+      if (!childClosed && child.exitCode === null) {
+        console.error('[smoke-ios-device-e2e] WARNING: devicectl console did not close after SIGTERM; sending SIGKILL');
+        child.kill('SIGKILL');
+
+        forceExitTimer = setTimeout(() => {
+          if (!childClosed) {
+            exitWithCode();
+          }
+        }, 1000);
+      }
+    }, terminateGraceMs);
   }
 
   const timer = setTimeout(() => {
@@ -417,6 +452,13 @@ function waitConsole(args) {
   });
 
   child.on('close', code => {
+    childClosed = true;
+
+    if (exitAfterChildClose != null) {
+      exitAfterChildClose();
+      return;
+    }
+
     if (finished) {
       return;
     }
@@ -438,48 +480,89 @@ function waitConsole(args) {
 function runParserTest() {
   const cases = [
     {
-      name: 'displayed pass',
+      name: 'PASS valido',
       expected: { scenario: 'displayed', id: '', correlationId: '' },
       line: '2026-05-06 SMOKE:RESULT {"scenario":"displayed","status":"PASS","timestamp":"2026-05-06T00:00:00.000Z","count":1}',
-      status: 'PASS',
+      expectedStatus: 'PASS',
+      expectedMatch: true,
     },
     {
-      name: 'verify displayed fail with normalized id',
+      name: 'FAIL valido',
       expected: { scenario: 'verify-displayed', id: 'smoke-abc', correlationId: 'abc' },
       line: 'SMOKE:RESULT {"scenario":"verify-displayed","status":"FAIL","timestamp":"2026-05-06T00:00:00.000Z","id":"smoke-abc","correlationId":"abc","reason":"not_found"}',
-      status: 'FAIL',
+      expectedStatus: 'FAIL',
+      expectedMatch: true,
+    },
+    {
+      name: 'riga senza marker',
+      expected: { scenario: 'displayed', id: '', correlationId: '' },
+      line: 'some unrelated log line',
+      expectedNoResult: true,
+    },
+    {
+      name: 'JSON invalido',
+      expected: { scenario: 'displayed', id: '', correlationId: '' },
+      line: 'SMOKE:RESULT {"scenario":"displayed","status":',
+      expectedInvalid: true,
+    },
+    {
+      name: 'stesso scenario con id diverso',
+      expected: { scenario: 'verify-displayed', id: 'smoke-abc', correlationId: 'abc' },
+      line: 'SMOKE:RESULT {"scenario":"verify-displayed","status":"PASS","timestamp":"2026-05-06T00:00:00.000Z","id":"smoke-other"}',
+      expectedMatch: false,
+    },
+    {
+      name: 'correlationId diverso',
+      expected: { scenario: 'verify-displayed', id: 'smoke-abc', correlationId: 'abc' },
+      line: 'SMOKE:RESULT {"scenario":"verify-displayed","status":"PASS","timestamp":"2026-05-06T00:00:00.000Z","correlationId":"other"}',
+      expectedMatch: false,
+    },
+    {
+      name: 'id normalizzato',
+      expected: { scenario: 'verify-displayed', id: 'abc', correlationId: '' },
+      line: 'SMOKE:RESULT {"scenario":"verify-displayed","status":"PASS","timestamp":"2026-05-06T00:00:00.000Z","id":"smoke-abc","correlationId":"abc"}',
+      expectedStatus: 'PASS',
+      expectedMatch: true,
     },
   ];
 
   for (const testCase of cases) {
     const parsed = extractSmokeResult(testCase.line);
+
+    if (testCase.expectedNoResult) {
+      if (parsed !== null) {
+        console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} should not parse`);
+        process.exit(1);
+      }
+      continue;
+    }
+
+    if (testCase.expectedInvalid) {
+      if (parsed?.type !== 'invalid') {
+        console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} should be ignored as invalid`);
+        process.exit(1);
+      }
+      continue;
+    }
+
     if (parsed?.type !== 'result') {
-      console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} did not parse`);
+      console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} did not parse as result`);
       process.exit(1);
     }
-    if (!matchesExpected(parsed.payload, testCase.expected)) {
-      console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} did not match`);
+
+    const matched = matchesExpected(parsed.payload, testCase.expected);
+    if (matched !== testCase.expectedMatch) {
+      console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} match=${matched}`);
       process.exit(1);
     }
-    if (parsed.payload.status !== testCase.status) {
+
+    if (testCase.expectedStatus && parsed.payload.status !== testCase.expectedStatus) {
       console.error(`[smoke-ios-device-e2e] parser test failed: ${testCase.name} status mismatch`);
       process.exit(1);
     }
   }
 
-  const mismatch = extractSmokeResult(
-    'SMOKE:RESULT {"scenario":"local-display","status":"PASS","id":"smoke-other","correlationId":"other"}',
-  );
-  if (mismatch?.type !== 'result') {
-    console.error('[smoke-ios-device-e2e] parser test failed: mismatch fixture did not parse');
-    process.exit(1);
-  }
-  if (matchesExpected(mismatch.payload, { scenario: 'verify-displayed', id: 'smoke-abc', correlationId: 'abc' })) {
-    console.error('[smoke-ios-device-e2e] parser test failed: accepted mismatched scenario/id');
-    process.exit(1);
-  }
-
-  console.log('[smoke-ios-device-e2e] parser static test: PASS');
+  console.log(`[smoke-ios-device-e2e] parser static test: PASS (${cases.length}/${cases.length} cases: ${cases.map(testCase => testCase.name).join(', ')})`);
 }
 
 const [mode, ...args] = process.argv.slice(2);
