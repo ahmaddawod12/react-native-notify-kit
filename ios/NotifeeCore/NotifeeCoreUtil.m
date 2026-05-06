@@ -83,7 +83,7 @@ static NSInteger const kNotifeeRollingTargetPerTrigger = 32;
     notificationActionDict[@"authenticationRequired"] =
         @(((notificationAction.options & UNNotificationActionOptionAuthenticationRequired) != 0));
 
-    if ([[notificationAction class] isKindOfClass:[UNTextInputNotificationAction class]]) {
+    if ([notificationAction isKindOfClass:[UNTextInputNotificationAction class]]) {
       UNTextInputNotificationAction *notificationInputAction =
           (UNTextInputNotificationAction *)notificationAction;
       if ([notificationInputAction textInputButtonTitle] == nil &&
