@@ -5,6 +5,10 @@ if [[ "${VERBOSE:-0}" == "1" ]]; then
   set -x
 fi
 
+if [[ "${EXPECT_RECHAIN_FIX:-0}" == "1" ]]; then
+  echo "[delegate-chaining] EXPECT_RECHAIN_FIX=1 future rechain assertions enabled"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/notifee-ios-delegate-chaining.XXXXXX")"
@@ -69,5 +73,8 @@ if ! "$CLANG_PATH" \
 fi
 
 if ! "$OUTPUT_BINARY"; then
+  if [[ "${EXPECT_RECHAIN_FIX:-0}" == "1" ]]; then
+    fail "harness delegate chaining fallito in EXPECT_RECHAIN_FIX=1; expected future failure finche' il runtime rechain helper non esiste"
+  fi
   fail "harness delegate chaining fallito"
 fi
