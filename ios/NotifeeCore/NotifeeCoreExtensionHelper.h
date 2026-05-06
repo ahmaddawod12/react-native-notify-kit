@@ -24,8 +24,8 @@ static NSString *const kPayloadOptionsName = @"notifee_options";
 static NSString *const kPayloadOptionsImageURLName = @"image";
 
 @interface NotifeeCoreExtensionHelper : NSObject
-@property(nonatomic, strong) void (^contentHandler)(UNNotificationContent *c);
-@property(nonatomic, strong) UNMutableNotificationContent *modifiedContent;
+@property(nonatomic, copy, nullable) void (^contentHandler)(UNNotificationContent *c);
+@property(nonatomic, strong, nullable) UNMutableNotificationContent *modifiedContent;
 
 + (NotifeeCoreExtensionHelper *)instance NS_SWIFT_NAME(serviceExtension());
 

@@ -23,13 +23,21 @@ private func requestedAttachmentURLs(from userInfo: [AnyHashable: Any]) -> [Stri
 class NotificationService: UNNotificationServiceExtension {
   var contentHandler: ((UNNotificationContent) -> Void)?
   var bestAttemptContent: UNMutableNotificationContent?
+  private let deliveryLock = NSLock()
+  private var didDeliver = false
 
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    let mutableContent = request.content.mutableCopy() as? UNMutableNotificationContent
+
+    deliveryLock.lock()
+    didDeliver = false
     self.contentHandler = contentHandler
-    self.bestAttemptContent = request.content.mutableCopy() as? UNMutableNotificationContent
+    self.bestAttemptContent = mutableContent
+    deliveryLock.unlock()
+
     let requestedAttachmentUrls = requestedAttachmentURLs(from: request.content.userInfo)
 
     nseLog(
@@ -39,9 +47,9 @@ class NotificationService: UNNotificationServiceExtension {
         "urls=\(requestedAttachmentUrls.joined(separator: ","))"
     )
 
-    guard let bestAttemptContent = bestAttemptContent else {
+    guard let bestAttemptContent = mutableContent else {
       nseLog("mutableCopy failed for id=\(request.identifier); delivering original content")
-      contentHandler(request.content)
+      deliverOnce(request.content)
       return
     }
 
@@ -55,19 +63,38 @@ class NotificationService: UNNotificationServiceExtension {
             "deliveredAttachments=\(content.attachments.count) " +
             "identifiers=\(deliveredAttachmentIds)"
         )
-        self?.contentHandler?(content)
+        self?.deliverOnce(content)
       }
     )
   }
 
+  private func deliverOnce(_ content: UNNotificationContent) {
+    var handler: ((UNNotificationContent) -> Void)?
+
+    deliveryLock.lock()
+    if !didDeliver {
+      didDeliver = true
+      handler = contentHandler
+      contentHandler = nil
+      bestAttemptContent = nil
+    }
+    deliveryLock.unlock()
+
+    handler?(content)
+  }
+
   override func serviceExtensionTimeWillExpire() {
-    if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
+    deliveryLock.lock()
+    let content = bestAttemptContent
+    deliveryLock.unlock()
+
+    if let bestAttemptContent = content {
       nseLog(
         "serviceExtensionTimeWillExpire id=\(bestAttemptContent.userInfo["gcm.message_id"] ?? "n/a") " +
           "title=\(bestAttemptContent.title) " +
           "deliveredAttachments=\(bestAttemptContent.attachments.count)"
       )
-      contentHandler(bestAttemptContent)
+      deliverOnce(bestAttemptContent)
     }
   }
 }

@@ -44,6 +44,24 @@ describe('Check 1 — Template ↔ ObjC API contract', () => {
     expect(template).toContain('import RNNotifeeCore');
   });
 
+  it('Swift template routes delivery paths through deliverOnce', () => {
+    expect(template).toContain('private func deliverOnce(_ content: UNNotificationContent)');
+    expect(template).toContain('self?.deliverOnce(content)');
+    expect(template).toContain('deliverOnce(request.content)');
+    expect(template).toContain('deliverOnce(bestAttemptContent)');
+    expect(template).not.toContain('self?.contentHandler?(content)');
+    expect(template).not.toContain('contentHandler(bestAttemptContent)');
+    expect(template).not.toContain('contentHandler(request.content)');
+  });
+
+  it('Swift template clears retained delivery state after delivery', () => {
+    expect(template).toContain('private let deliveryLock = NSLock()');
+    expect(template).toContain('private var didDeliver = false');
+    expect(template).toMatch(/if !didDeliver \{\s+didDeliver = true/);
+    expect(template).toContain('contentHandler = nil');
+    expect(template).toContain('bestAttemptContent = nil');
+  });
+
   it('ObjC header is part of RNNotifeeCore pod (public header)', () => {
     // Verify the podspec exposes this header
     const podspecPath = path.resolve(
