@@ -6,6 +6,7 @@ const RNFB_POST_INSTALL_MARKER =
 export interface NotifyKitNsePodfilePatchOptions {
   targetName: string;
   packagePathFromIos?: string;
+  placement?: 'nested' | 'topLevel';
 }
 
 export interface NotifyKitNsePodfilePatchResult {
@@ -20,9 +21,15 @@ export function patchPodfileForNotifyKitNse(
   let patched = podfileText;
   let changed = false;
   const packagePathFromIos = options.packagePathFromIos ?? DEFAULT_PACKAGE_PATH_FROM_IOS;
+  const placement = options.placement ?? 'nested';
 
   if (!hasUncommentedTarget(patched, options.targetName)) {
-    const withNseTarget = insertNseTarget(patched, options.targetName, packagePathFromIos);
+    const withNseTarget = insertNseTarget(
+      patched,
+      options.targetName,
+      packagePathFromIos,
+      placement,
+    );
     if (withNseTarget === null) {
       return { contents: patched, didChange: changed };
     }
@@ -43,20 +50,18 @@ function insertNseTarget(
   content: string,
   targetName: string,
   packagePathFromIos: string,
+  placement: 'nested' | 'topLevel',
 ): string | null {
-  let block = `\n  target '${targetName}' do\n`;
-  block += `    inherit! :search_paths\n`;
-  block += `    pod 'RNNotifeeCore', :path => '${packagePathFromIos}'\n`;
-  block += `  end\n`;
+  const block = buildNseTargetBlock(targetName, packagePathFromIos, placement);
 
   const targetMatch = content.match(/^target\s+['"][^'"]+['"]\s+do/m);
   if (!targetMatch || targetMatch.index === undefined) {
-    return content + '\n' + block;
+    return appendNseTarget(content, block, placement);
   }
 
-  const insertIndex = findMatchingRubyBlockEnd(content, targetMatch.index);
+  const targetEndIndex = findMatchingRubyBlockEnd(content, targetMatch.index);
 
-  if (insertIndex === -1) {
+  if (targetEndIndex === -1) {
     throw new Error(
       "Could not locate main app target's closing 'end' in Podfile. NSE insertion aborted. " +
         'Your Podfile may use abstract_target, unusual formatting, or nested blocks - ' +
@@ -64,7 +69,53 @@ function insertNseTarget(
     );
   }
 
+  if (placement === 'topLevel') {
+    const insertIndex = findLineEnd(content, targetEndIndex);
+    const separator = insertIndex > 0 && content[insertIndex - 1] === '\n' ? '\n' : '\n\n';
+    return content.slice(0, insertIndex) + separator + block + content.slice(insertIndex);
+  }
+
+  const insertIndex = targetEndIndex;
   return content.slice(0, insertIndex) + block + content.slice(insertIndex);
+}
+
+function buildNseTargetBlock(
+  targetName: string,
+  packagePathFromIos: string,
+  placement: 'nested' | 'topLevel',
+): string {
+  if (placement === 'topLevel') {
+    return (
+      `target '${targetName}' do\n` +
+      `  pod 'RNNotifeeCore', :path => '${packagePathFromIos}'\n` +
+      `end\n`
+    );
+  }
+
+  return (
+    `\n  target '${targetName}' do\n` +
+    `    inherit! :search_paths\n` +
+    `    pod 'RNNotifeeCore', :path => '${packagePathFromIos}'\n` +
+    `  end\n`
+  );
+}
+
+function appendNseTarget(
+  content: string,
+  block: string,
+  placement: 'nested' | 'topLevel',
+): string {
+  if (placement === 'nested') {
+    return content + '\n' + block;
+  }
+
+  const separator = content.length === 0 ? '' : content.endsWith('\n') ? '\n' : '\n\n';
+  return content + separator + block;
+}
+
+function findLineEnd(content: string, lineStartIndex: number): number {
+  const newlineIndex = content.indexOf('\n', lineStartIndex);
+  return newlineIndex === -1 ? content.length : newlineIndex + 1;
 }
 
 function ensureRnfbPostInstallPatch(content: string): string {

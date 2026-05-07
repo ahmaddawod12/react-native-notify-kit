@@ -20,6 +20,7 @@ function withNotifyKitIosNsePodfile(config, nseOptions) {
     const result = patchPodfileForNotifyKitNse(modConfig.modResults.contents, {
       targetName: nseOptions.targetName,
       packagePathFromIos,
+      placement: 'topLevel',
     });
 
     modConfig.modResults.contents = result.contents;

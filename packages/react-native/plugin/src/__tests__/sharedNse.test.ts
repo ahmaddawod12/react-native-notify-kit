@@ -49,6 +49,12 @@ function countOccurrences(content: string, needle: string): number {
   return content.split(needle).length - 1;
 }
 
+function getTopLevelTargetBlock(content: string, targetName: string): string {
+  const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = content.match(new RegExp(`^target '${escapedTargetName}' do\\n[\\s\\S]*?^end\\n?`, 'm'));
+  return match?.[0] ?? '';
+}
+
 function parseFixtureProject(): ReturnType<typeof xcode.project> {
   const proj = xcode.project(FIXTURE_PBXPROJ_PATH);
   proj.parseSync();
@@ -276,6 +282,9 @@ describe('plugin shared NSE Podfile patcher', () => {
     });
 
     expect(first.didChange).toBe(true);
+    expect(first.contents).toContain("  target 'NotifyKitNSE' do");
+    expect(first.contents).not.toMatch(/^target 'NotifyKitNSE' do/m);
+    expect(first.contents).toContain('    inherit! :search_paths');
     expect(first.contents).toContain(
       "pod 'RNNotifeeCore', :path => '../node_modules/react-native-notify-kit'",
     );
@@ -293,6 +302,45 @@ describe('plugin shared NSE Podfile patcher', () => {
     );
     expect(customPath.contents).not.toContain(
       "pod 'RNNotifeeCore', :path => '../node_modules/react-native-notify-kit'",
+    );
+  });
+
+  it('supports top-level placement without search path inheritance', () => {
+    const first = patchPluginPodfileForNotifyKitNse(BASIC_PODFILE, {
+      targetName: 'NotifyKitNSE',
+      packagePathFromIos: '../../../packages/react-native',
+      placement: 'topLevel',
+    });
+    const second = patchPluginPodfileForNotifyKitNse(first.contents, {
+      targetName: 'NotifyKitNSE',
+      packagePathFromIos: '../../../packages/react-native',
+      placement: 'topLevel',
+    });
+    const customPath = patchPluginPodfileForNotifyKitNse(BASIC_PODFILE, {
+      targetName: 'CustomNotifyKitNSE',
+      packagePathFromIos: '../../custom/react-native-notify-kit',
+      placement: 'topLevel',
+    });
+    const hostTargetBlock = getTopLevelTargetBlock(first.contents, 'MyApp');
+    const nseTargetBlock = getTopLevelTargetBlock(first.contents, 'NotifyKitNSE');
+    const customTargetBlock = getTopLevelTargetBlock(customPath.contents, 'CustomNotifyKitNSE');
+
+    expect(first.didChange).toBe(true);
+    expect(first.contents).toMatch(/^target 'NotifyKitNSE' do/m);
+    expect(first.contents).not.toMatch(/^  target 'NotifyKitNSE' do/m);
+    expect(hostTargetBlock).not.toContain("target 'NotifyKitNSE' do");
+    expect(nseTargetBlock).not.toContain('inherit! :search_paths');
+    expect(nseTargetBlock).toContain(
+      "pod 'RNNotifeeCore', :path => '../../../packages/react-native'",
+    );
+    expect(first.contents).toContain(RNFB_POST_INSTALL_MARKER);
+    expect(countOccurrences(first.contents, "target 'NotifyKitNSE' do")).toBe(1);
+    expect(countOccurrences(first.contents, RNFB_POST_INSTALL_MARKER)).toBe(1);
+    expect(second).toEqual({ contents: first.contents, didChange: false });
+
+    expect(customTargetBlock).not.toContain('inherit! :search_paths');
+    expect(customTargetBlock).toContain(
+      "pod 'RNNotifeeCore', :path => '../../custom/react-native-notify-kit'",
     );
   });
 });

@@ -18,6 +18,16 @@ const repoRoot = path.resolve(__dirname, '../../../../..');
 const expoSmokeRoot = path.join(repoRoot, 'apps/expo-smoke');
 const expoSmokeIosRoot = path.join(expoSmokeRoot, 'ios');
 
+function countOccurrences(content: string, needle: string): number {
+  return content.split(needle).length - 1;
+}
+
+function getTopLevelTargetBlock(content: string, targetName: string): string {
+  const escapedTargetName = targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = content.match(new RegExp(`^target '${escapedTargetName}' do\\n[\\s\\S]*?^end\\n?`, 'm'));
+  return match?.[0] ?? '';
+}
+
 describe('NotifyKit Expo Podfile mod', () => {
   beforeEach(() => {
     jest.resetModules();
@@ -58,13 +68,61 @@ describe('NotifyKit Expo Podfile mod', () => {
     const config = withNotifyKitIosNsePodfile({}, enabledOptions);
 
     expect(withPodfile).toHaveBeenCalledTimes(1);
-    expect(config.modResults.contents).toContain("target 'NotifyKitNSE' do");
-    expect(config.modResults.contents).toContain(
+    const contents = config.modResults.contents;
+    const hostTargetBlock = getTopLevelTargetBlock(contents, 'MyApp');
+    const nseTargetBlock = getTopLevelTargetBlock(contents, 'NotifyKitNSE');
+
+    expect(contents).toMatch(/^target 'NotifyKitNSE' do/m);
+    expect(contents).not.toMatch(/^  target 'NotifyKitNSE' do/m);
+    expect(hostTargetBlock).not.toContain("target 'NotifyKitNSE' do");
+    expect(nseTargetBlock).not.toContain('inherit! :search_paths');
+    expect(nseTargetBlock).toContain(
       "pod 'RNNotifeeCore', :path => '../../../packages/react-native'",
     );
-    expect(config.modResults.contents).toContain(
+    expect(contents).toContain(
       'NotifyKitNSE: avoid an Xcode build cycle between the embedded app extension',
     );
+  });
+
+  it('keeps the Expo Podfile patch idempotent on repeated mod runs', () => {
+    const withPodfile = jest.fn((config, action) => {
+      const first = action({
+        ...config,
+        modRequest: {
+          projectRoot: expoSmokeRoot,
+          platformProjectRoot: expoSmokeIosRoot,
+        },
+        modResults: {
+          contents: BASIC_PODFILE,
+        },
+      });
+
+      return action({
+        ...first,
+        modRequest: {
+          projectRoot: expoSmokeRoot,
+          platformProjectRoot: expoSmokeIosRoot,
+        },
+        modResults: {
+          contents: first.modResults.contents,
+        },
+      });
+    });
+    jest.doMock('expo/config-plugins', () => ({ withPodfile }), { virtual: true });
+
+    const { withNotifyKitIosNsePodfile } = require('../ios/withNotifyKitIosNsePodfile');
+    const config = withNotifyKitIosNsePodfile({}, enabledOptions);
+    const contents = config.modResults.contents;
+    const nseTargetBlock = getTopLevelTargetBlock(contents, 'NotifyKitNSE');
+
+    expect(countOccurrences(contents, "target 'NotifyKitNSE' do")).toBe(1);
+    expect(
+      countOccurrences(
+        contents,
+        'NotifyKitNSE: avoid an Xcode build cycle between the embedded app extension',
+      ),
+    ).toBe(1);
+    expect(nseTargetBlock).not.toContain('inherit! :search_paths');
   });
 
   it('passes the configured targetName to the Podfile patcher', () => {
