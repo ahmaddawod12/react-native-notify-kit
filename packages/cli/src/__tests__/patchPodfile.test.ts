@@ -1,4 +1,4 @@
-import { getPatchedPodfile } from '../lib/patchPodfile';
+import { getPatchedPodfile, patchPodfileForNotifyKitNse } from '../lib/patchPodfile';
 
 const RNFB_POST_INSTALL_MARKER =
   'NotifyKitNSE: avoid an Xcode build cycle between the embedded app extension';
@@ -89,6 +89,81 @@ function countOccurrences(content: string, needle: string): number {
 }
 
 describe('patchPodfile', () => {
+  it('returns a structured result when the pure patcher changes a basic Podfile', () => {
+    const result = patchPodfileForNotifyKitNse(BASIC_PODFILE, {
+      targetName: 'NotifyKitNSE',
+    });
+
+    expect(result.didChange).toBe(true);
+    expect(result.contents).toContain("target 'NotifyKitNSE' do");
+    expect(result.contents).toContain('inherit! :search_paths');
+    expect(result.contents).toContain(
+      "pod 'RNNotifeeCore', :path => '../node_modules/react-native-notify-kit'",
+    );
+    expect(result.contents).toContain(RNFB_POST_INSTALL_MARKER);
+  });
+
+  it('returns unchanged contents when the pure patcher receives an already patched Podfile', () => {
+    const first = patchPodfileForNotifyKitNse(BASIC_PODFILE, {
+      targetName: 'NotifyKitNSE',
+    });
+    const second = patchPodfileForNotifyKitNse(first.contents, {
+      targetName: 'NotifyKitNSE',
+    });
+
+    expect(first.didChange).toBe(true);
+    expect(second.didChange).toBe(false);
+    expect(second.contents).toBe(first.contents);
+  });
+
+  it('keeps the legacy getPatchedPodfile string-or-null contract', () => {
+    const patched = getPatchedPodfile(BASIC_PODFILE, 'NotifyKitNSE');
+    expect(typeof patched).toBe('string');
+
+    const second = getPatchedPodfile(patched!, 'NotifyKitNSE');
+    expect(second).toBeNull();
+  });
+
+  it('uses the existing default package path for RNNotifeeCore', () => {
+    const result = patchPodfileForNotifyKitNse(BASIC_PODFILE, {
+      targetName: 'NotifyKitNSE',
+    });
+
+    expect(result.contents).toContain(
+      "pod 'RNNotifeeCore', :path => '../node_modules/react-native-notify-kit'",
+    );
+  });
+
+  it('uses a custom package path for RNNotifeeCore when provided', () => {
+    const result = patchPodfileForNotifyKitNse(BASIC_PODFILE, {
+      targetName: 'NotifyKitNSE',
+      packagePathFromIos: '../../node_modules/react-native-notify-kit',
+    });
+
+    expect(result.didChange).toBe(true);
+    expect(result.contents).toContain(
+      "pod 'RNNotifeeCore', :path => '../../node_modules/react-native-notify-kit'",
+    );
+    expect(result.contents).not.toContain(
+      "pod 'RNNotifeeCore', :path => '../node_modules/react-native-notify-kit'",
+    );
+  });
+
+  it('keeps the RNFirebase workaround idempotent through the pure patcher', () => {
+    const first = patchPodfileForNotifyKitNse(PODFILE_WITH_POST_INSTALL, {
+      targetName: 'NotifyKitNSE',
+    });
+    const second = patchPodfileForNotifyKitNse(first.contents, {
+      targetName: 'NotifyKitNSE',
+    });
+
+    expect(first.didChange).toBe(true);
+    expect(second.didChange).toBe(false);
+    expect(second.contents).toBe(first.contents);
+    expect(countOccurrences(first.contents, RNFB_POST_INSTALL_MARKER)).toBe(1);
+    expect(countOccurrences(first.contents, 'post_install do |installer|')).toBe(1);
+  });
+
   it('nests NSE target inside the main app target and adds post_install when absent', () => {
     const result = getPatchedPodfile(BASIC_PODFILE, 'NotifyKitNSE');
     expect(result).not.toBeNull();

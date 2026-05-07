@@ -1,8 +1,19 @@
 import * as fs from 'fs';
 
+const DEFAULT_PACKAGE_PATH_FROM_IOS = '../node_modules/react-native-notify-kit';
 const RNFB_INFO_PLIST_INPUT_PATH = '$(BUILT_PRODUCTS_DIR)/$(INFOPLIST_PATH)';
 const RNFB_POST_INSTALL_MARKER =
   'NotifyKitNSE: avoid an Xcode build cycle between the embedded app extension';
+
+export interface NotifyKitNsePodfilePatchOptions {
+  targetName: string;
+  packagePathFromIos?: string;
+}
+
+export interface NotifyKitNsePodfilePatchResult {
+  contents: string;
+  didChange: boolean;
+}
 
 /**
  * Patches the Podfile to add the NSE target with RNNotifeeCore pod.
@@ -15,31 +26,31 @@ const RNFB_POST_INSTALL_MARKER =
 export function patchPodfile(podfilePath: string, targetName: string, dryRun: boolean): boolean {
   const content = fs.readFileSync(podfilePath, 'utf-8');
 
-  const patched = getPatchedPodfile(content, targetName);
-  if (patched === null) {
+  const result = patchPodfileForNotifyKitNse(content, { targetName });
+  if (!result.didChange) {
     return false; // Already patched
   }
 
   if (!dryRun) {
-    fs.writeFileSync(podfilePath, patched, 'utf-8');
+    fs.writeFileSync(podfilePath, result.contents, 'utf-8');
   }
 
   return true;
 }
 
-/**
- * Returns the patched Podfile content without writing to disk (for dry-run
- * preview or testing).
- */
-export function getPatchedPodfile(content: string, targetName: string): string | null {
-  let patched = content;
+export function patchPodfileForNotifyKitNse(
+  podfileText: string,
+  options: NotifyKitNsePodfilePatchOptions,
+): NotifyKitNsePodfilePatchResult {
+  let patched = podfileText;
   let changed = false;
+  const packagePathFromIos = options.packagePathFromIos ?? DEFAULT_PACKAGE_PATH_FROM_IOS;
 
   // Idempotency check — skip commented lines (# prefix)
-  if (!hasUncommentedTarget(patched, targetName)) {
-    const withNseTarget = insertNseTarget(patched, targetName);
+  if (!hasUncommentedTarget(patched, options.targetName)) {
+    const withNseTarget = insertNseTarget(patched, options.targetName, packagePathFromIos);
     if (withNseTarget === null) {
-      return null;
+      return { contents: patched, didChange: changed };
     }
     patched = withNseTarget;
     changed = true;
@@ -51,7 +62,16 @@ export function getPatchedPodfile(content: string, targetName: string): string |
     changed = true;
   }
 
-  return changed ? patched : null;
+  return { contents: patched, didChange: changed };
+}
+
+/**
+ * Returns the patched Podfile content without writing to disk (for dry-run
+ * preview or testing).
+ */
+export function getPatchedPodfile(content: string, targetName: string): string | null {
+  const result = patchPodfileForNotifyKitNse(content, { targetName });
+  return result.didChange ? result.contents : null;
 }
 
 /**
@@ -66,11 +86,15 @@ export function getPatchedPodfile(content: string, targetName: string): string |
  * sub-target there.
  * Discovered: F3 Round 3, Check 3 smoke-app integration (2026-04).
  */
-function insertNseTarget(content: string, targetName: string): string | null {
+function insertNseTarget(
+  content: string,
+  targetName: string,
+  packagePathFromIos: string,
+): string | null {
   // Build the NSE block (indented since it's inside the parent target)
   let block = `\n  target '${targetName}' do\n`;
   block += `    inherit! :search_paths\n`;
-  block += `    pod 'RNNotifeeCore', :path => '../node_modules/react-native-notify-kit'\n`;
+  block += `    pod 'RNNotifeeCore', :path => '${packagePathFromIos}'\n`;
   block += `  end\n`;
 
   // Find the main app target's closing `end`.
