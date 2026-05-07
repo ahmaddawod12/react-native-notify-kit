@@ -1,8 +1,5 @@
 # Created by https://www.gitignore.io/api/node,xcode,gradle,android,webstorm,firebase,reactnative,androidstudio,visualstudiocode
 
-### Expo Config Plugin ###
-plugin/build/
-
 ### Android ###
 # Built application files
 *.apk
@@ -559,3 +556,7 @@ ios/NotifeeCore
 
 # Generated directory when running refresh-example.sh
 TEMP
+
+# Expo config plugin build output is required by app.plugin.js and published in the package.
+!plugin/build/
+!plugin/build/**

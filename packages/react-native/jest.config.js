@@ -15,7 +15,7 @@ module.exports = {
     ],
   },
   rootDir: '.',
-  testMatch: ['<rootDir>/__tests__/**/*.test.ts'],
+  testMatch: ['<rootDir>/__tests__/**/*.test.ts', '<rootDir>/plugin/src/__tests__/**/*.test.ts'],
   moduleNameMapper: {
     '^react-native-notify-kit/src/(.*)$': '<rootDir>/src/$1',
     '^react-native-notify-kit/(.*)$': '<rootDir>/$1',

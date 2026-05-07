@@ -16,4 +16,19 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ...config.android,
     package: 'com.notifykit.exposmoke',
   },
+  plugins: [
+    ...(config.plugins ?? []),
+    [
+      'react-native-notify-kit',
+      {
+        ios: {
+          notificationServiceExtension: {
+            enabled: true,
+            targetName: 'NotifyKitNSE',
+            bundleSuffix: '.NotifyKitNSE',
+          },
+        },
+      },
+    ],
+  ],
 });

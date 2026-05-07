@@ -11,7 +11,8 @@ This fixture is for Expo CNG, prebuild, and development builds; it is not intend
 - Expo SDK 55 development build flow.
 - Local workspace dependency: `react-native-notify-kit: workspace:*`.
 - Basic `requestPermission`, Android `createChannel`, `displayNotification`, foreground event, and `getDisplayedNotifications` checks.
-- No FCM, Notification Service Extension, config plugin, or vendor notification SDK.
+- Config plugin resolution with iOS Notification Service Extension config validation and EAS `appExtensions` metadata.
+- No native Notification Service Extension generation, FCM, Firebase setup, or vendor notification SDK yet.
 
 ## Commands
 

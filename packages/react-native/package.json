@@ -11,6 +11,8 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./app.plugin": "./app.plugin.js",
+    "./app.plugin.js": "./app.plugin.js",
     "./server": {
       "types": "./server/dist/index.d.ts",
       "default": "./server/dist/index.js"
@@ -59,7 +61,13 @@
     "xcode": "^3.0.1"
   },
   "peerDependencies": {
+    "expo": "*",
     "react-native": ">=0.73.0"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
   },
   "codegenConfig": {
     "name": "NotifeeSpec",
@@ -103,6 +111,8 @@
     "!/src/__mocks__",
     "/dist",
     "/lib",
+    "/app.plugin.js",
+    "/plugin/build",
     "/*.podspec",
     "/jest-mock.js",
     "/react-native.config.js",

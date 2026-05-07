@@ -16923,6 +16923,7 @@ __metadata:
     typescript: "npm:^5.9.3"
     xcode: "npm:^3.0.1"
   peerDependencies:
+    expo: "*"
     react-native: ">=0.73.0"
   dependenciesMeta:
     chalk:
@@ -16932,6 +16933,9 @@ __metadata:
     plist:
       optional: true
     xcode:
+      optional: true
+  peerDependenciesMeta:
+    expo:
       optional: true
   bin:
     react-native-notify-kit: ./cli/bin/react-native-notify-kit
