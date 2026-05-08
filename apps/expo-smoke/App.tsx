@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -8,13 +8,31 @@ import {
   Text,
   View,
 } from 'react-native';
-import notifee, { AndroidImportance, EventType } from 'react-native-notify-kit';
+import notifee, {
+  AndroidImportance,
+  EventType,
+  type NotificationSettings,
+} from 'react-native-notify-kit';
 
 const CHANNEL_ID = 'expo-smoke-default';
+const CHANNEL_NAME = 'Expo Smoke Default';
+const MAX_LOG_ENTRIES = 80;
 
 type LogEntry = {
   id: number;
   message: string;
+};
+
+type LogOptions = {
+  marker?: string;
+  markerDetail?: string | number;
+  value?: unknown;
+};
+
+type SmokeAction = {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
 };
 
 const formatValue = (value: unknown): string => {
@@ -22,62 +40,231 @@ const formatValue = (value: unknown): string => {
     return value;
   }
 
-  return JSON.stringify(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 };
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return formatValue(error);
+};
+
+const getEventTypeName = (eventType: EventType): string =>
+  (EventType as Record<number, string>)[eventType] ?? String(eventType);
+
+const summarizeSettings = (settings: NotificationSettings) => ({
+  authorizationStatus: settings.authorizationStatus,
+  android: {
+    alarm: settings.android.alarm,
+  },
+  ios: {
+    alert: settings.ios.alert,
+    badge: settings.ios.badge,
+    sound: settings.ios.sound,
+    notificationCenter: settings.ios.notificationCenter,
+    authorizationStatus: settings.ios.authorizationStatus,
+  },
+});
+
+const getDisplayedNotificationId = (
+  displayedNotification: Awaited<ReturnType<typeof notifee.getDisplayedNotifications>>[number],
+): string =>
+  displayedNotification.id ?? displayedNotification.notification.id ?? 'unknown';
+
+const getChannelIds = (channels: Awaited<ReturnType<typeof notifee.getChannels>>): string[] =>
+  channels.map(channel => channel.id);
+
+const getMarkerLine = (marker: string, markerDetail?: string | number): string =>
+  markerDetail === undefined ? marker : `${marker} ${markerDetail}`;
+
+const trimMarkerDetail = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, 160);
+
+const getLocalNotificationId = (): string => `expo-smoke-local-${Date.now()}`;
+
+const hasGetChannels = (): boolean => typeof notifee.getChannels === 'function';
+
+const logSkip = 'Skip: Android-only action.';
+
+const getErrorMarkerDetail = (scenario: string, error: unknown): string =>
+  trimMarkerDetail(`${scenario} ${getErrorMessage(error)}`);
+
+const getSettingsLogValue = (settings: NotificationSettings): unknown => summarizeSettings(settings);
+
+const getChannelsLogValue = (channels: Awaited<ReturnType<typeof notifee.getChannels>>): unknown => ({
+  count: channels.length,
+  ids: getChannelIds(channels).slice(0, 8),
+});
+
+const getDisplayedLogValue = (
+  displayedNotifications: Awaited<ReturnType<typeof notifee.getDisplayedNotifications>>,
+): unknown => ({
+  count: displayedNotifications.length,
+  ids: displayedNotifications.map(getDisplayedNotificationId),
+});
+
+const getForegroundLogValue = (
+  eventName: string,
+  notificationId: string | undefined,
+): unknown => ({
+  type: eventName,
+  notificationId: notificationId ?? 'none',
+});
 
 export default function App(): React.JSX.Element {
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [lastNotificationId, setLastNotificationId] = useState<string | undefined>();
+  const nextLogIdRef = useRef(0);
 
-  const addLog = useCallback((message: string, value?: unknown) => {
+  const addLog = useCallback((message: string, options: LogOptions = {}) => {
     const timestamp = new Date().toLocaleTimeString();
-    const suffix = value === undefined ? '' : ` ${formatValue(value)}`;
+    const suffix = options.value === undefined ? '' : ` ${formatValue(options.value)}`;
     const line = `[${timestamp}] ${message}${suffix}`;
+    const consoleLine = options.marker
+      ? getMarkerLine(options.marker, options.markerDetail)
+      : `[expo-smoke] ${message}${suffix}`;
 
-    console.log(`[expo-smoke] ${message}`, value ?? '');
-    setLogs(currentLogs => [{ id: Date.now(), message: line }, ...currentLogs].slice(0, 40));
+    console.log(consoleLine);
+    setLogs(currentLogs => {
+      nextLogIdRef.current += 1;
+      return [{ id: nextLogIdRef.current, message: line }, ...currentLogs].slice(0, MAX_LOG_ENTRIES);
+    });
   }, []);
 
+  const logError = useCallback(
+    (scenario: string, error: unknown) => {
+      const message = getErrorMessage(error);
+      addLog(`${scenario} failed`, {
+        marker: 'SMOKE:ERROR',
+        markerDetail: getErrorMarkerDetail(scenario, error),
+        value: message,
+      });
+    },
+    [addLog],
+  );
+
   useEffect(() => {
-    addLog('App mounted');
+    addLog('App started', {
+      marker: 'SMOKE:APP_STARTED',
+    });
+    addLog('NotifyKit JS import ready', {
+      marker: 'SMOKE:NOTIFEE_IMPORTED',
+    });
 
     const unsubscribe = notifee.onForegroundEvent(event => {
-      const eventName = EventType[event.type] ?? String(event.type);
-      addLog(`Foreground event: ${eventName}`, event.detail);
+      try {
+        const eventName = getEventTypeName(event.type);
+        const notificationId = event.detail.notification?.id;
+        const value = getForegroundLogValue(eventName, notificationId);
+
+        if (event.type === EventType.DELIVERED) {
+          addLog('Foreground event delivered', {
+            marker: 'SMOKE:FOREGROUND_EVENT_DELIVERED',
+            markerDetail: notificationId,
+            value,
+          });
+          return;
+        }
+
+        if (event.type === EventType.PRESS) {
+          addLog('Foreground event press', {
+            marker: 'SMOKE:FOREGROUND_EVENT_PRESS',
+            markerDetail: notificationId,
+            value,
+          });
+          return;
+        }
+
+        addLog('Foreground event', {
+          value,
+        });
+      } catch (error) {
+        logError('foreground', error);
+      }
     });
 
     return unsubscribe;
-  }, [addLog]);
+  }, [addLog, logError]);
+
+  const getNotificationSettings = useCallback(async () => {
+    try {
+      const settings = await notifee.getNotificationSettings();
+      addLog('Notification settings', {
+        marker: 'SMOKE:SETTINGS_OK',
+        value: getSettingsLogValue(settings),
+      });
+    } catch (error) {
+      logError('settings', error);
+    }
+  }, [addLog, logError]);
 
   const requestPermission = useCallback(async () => {
     try {
       const settings = await notifee.requestPermission();
       addLog('Permission settings', {
-        authorizationStatus: settings.authorizationStatus,
+        marker: 'SMOKE:PERMISSION_OK',
+        markerDetail: settings.authorizationStatus,
+        value: {
+          authorizationStatus: settings.authorizationStatus,
+        },
       });
     } catch (error) {
-      addLog('requestPermission failed', error instanceof Error ? error.message : error);
+      logError('permission', error);
     }
-  }, [addLog]);
+  }, [addLog, logError]);
 
-  const ensureAndroidChannel = useCallback(async () => {
+  const ensureAndroidChannel = useCallback(async (showIosSkip = false) => {
     if (Platform.OS !== 'android') {
+      if (showIosSkip) {
+        addLog(logSkip);
+      }
       return undefined;
     }
 
     const channelId = await notifee.createChannel({
       id: CHANNEL_ID,
-      name: 'Expo Smoke',
-      importance: AndroidImportance.DEFAULT,
+      name: CHANNEL_NAME,
+      importance: AndroidImportance.HIGH,
     });
-    addLog('Android channel ready', channelId);
+    addLog('Android channel ready', {
+      marker: 'SMOKE:CHANNEL_CREATED',
+      markerDetail: channelId,
+      value: {
+        id: channelId,
+      },
+    });
+
+    if (hasGetChannels()) {
+      const channels = await notifee.getChannels();
+      addLog('Android channels', {
+        marker: 'SMOKE:CHANNELS_COUNT',
+        markerDetail: channels.length,
+        value: getChannelsLogValue(channels),
+      });
+    }
 
     return channelId;
   }, [addLog]);
 
+  const ensureAndroidChannelFromButton = useCallback(async () => {
+    try {
+      await ensureAndroidChannel(true);
+    } catch (error) {
+      logError('channel', error);
+    }
+  }, [ensureAndroidChannel, logError]);
+
   const displayLocalNotification = useCallback(async () => {
     try {
       const channelId = await ensureAndroidChannel();
-      const notificationId = await notifee.displayNotification({
+      const notificationId = getLocalNotificationId();
+      const displayedNotificationId = await notifee.displayNotification({
+        id: notificationId,
         title: 'NotifyKit Expo smoke',
         body: 'Local notification from the Expo CNG fixture.',
         data: {
@@ -93,29 +280,80 @@ export default function App(): React.JSX.Element {
           : undefined,
       });
 
-      addLog('Displayed local notification', notificationId);
+      setLastNotificationId(displayedNotificationId);
+      addLog('Displayed local notification', {
+        marker: 'SMOKE:DISPLAY_LOCAL_OK',
+        markerDetail: displayedNotificationId,
+        value: {
+          id: displayedNotificationId,
+        },
+      });
     } catch (error) {
-      addLog('displayNotification failed', error instanceof Error ? error.message : error);
+      logError('display', error);
     }
-  }, [addLog, ensureAndroidChannel]);
+  }, [addLog, ensureAndroidChannel, logError]);
 
   const getDisplayedNotifications = useCallback(async () => {
     try {
       const displayedNotifications = await notifee.getDisplayedNotifications();
       addLog('Displayed notifications', {
-        count: displayedNotifications.length,
-        ids: displayedNotifications.map(item => item.id ?? item.notification.id ?? 'unknown'),
+        marker: 'SMOKE:DISPLAYED_COUNT',
+        markerDetail: displayedNotifications.length,
+        value: getDisplayedLogValue(displayedNotifications),
       });
     } catch (error) {
-      addLog('getDisplayedNotifications failed', error instanceof Error ? error.message : error);
+      logError('displayed', error);
     }
-  }, [addLog]);
+  }, [addLog, logError]);
 
-  const actions = useMemo(
+  const cancelLastNotification = useCallback(async () => {
+    if (!lastNotificationId) {
+      addLog('Skip: no last notification id.');
+      return;
+    }
+
+    try {
+      await notifee.cancelNotification(lastNotificationId);
+      addLog('Cancelled last notification', {
+        marker: 'SMOKE:CANCEL_OK',
+        markerDetail: lastNotificationId,
+        value: {
+          id: lastNotificationId,
+        },
+      });
+    } catch (error) {
+      logError('cancel', error);
+    }
+  }, [addLog, lastNotificationId, logError]);
+
+  const cancelAllNotifications = useCallback(async () => {
+    try {
+      await notifee.cancelAllNotifications();
+      addLog('Cancelled all notifications', {
+        marker: 'SMOKE:CANCEL_ALL_OK',
+      });
+    } catch (error) {
+      logError('cancel-all', error);
+    }
+  }, [addLog, logError]);
+
+  const clearLog = useCallback(() => {
+    setLogs([]);
+  }, []);
+
+  const actions = useMemo<SmokeAction[]>(
     () => [
+      {
+        label: 'Get notification settings',
+        onPress: getNotificationSettings,
+      },
       {
         label: 'Request permission',
         onPress: requestPermission,
+      },
+      {
+        label: 'Ensure Android channel',
+        onPress: ensureAndroidChannelFromButton,
       },
       {
         label: 'Display local notification',
@@ -125,8 +363,31 @@ export default function App(): React.JSX.Element {
         label: 'Get displayed notifications',
         onPress: getDisplayedNotifications,
       },
+      {
+        label: 'Cancel last notification',
+        onPress: cancelLastNotification,
+        disabled: !lastNotificationId,
+      },
+      {
+        label: 'Cancel all notifications',
+        onPress: cancelAllNotifications,
+      },
+      {
+        label: 'Clear log',
+        onPress: clearLog,
+      },
     ],
-    [displayLocalNotification, getDisplayedNotifications, requestPermission],
+    [
+      cancelAllNotifications,
+      cancelLastNotification,
+      clearLog,
+      displayLocalNotification,
+      ensureAndroidChannelFromButton,
+      getDisplayedNotifications,
+      getNotificationSettings,
+      lastNotificationId,
+      requestPermission,
+    ],
   );
 
   return (
@@ -141,11 +402,18 @@ export default function App(): React.JSX.Element {
           {actions.map(action => (
             <Pressable
               accessibilityRole="button"
+              disabled={action.disabled}
               key={action.label}
               onPress={action.onPress}
-              style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
+              style={({ pressed }) => [
+                styles.button,
+                pressed && styles.buttonPressed,
+                action.disabled && styles.buttonDisabled,
+              ]}
             >
-              <Text style={styles.buttonText}>{action.label}</Text>
+              <Text style={[styles.buttonText, action.disabled && styles.buttonTextDisabled]}>
+                {action.label}
+              </Text>
             </Pressable>
           ))}
         </View>
@@ -207,10 +475,16 @@ const styles = StyleSheet.create({
   buttonPressed: {
     backgroundColor: '#115e59',
   },
+  buttonDisabled: {
+    backgroundColor: '#c5cfd8',
+  },
   buttonText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  buttonTextDisabled: {
+    color: '#5f6b76',
   },
   logPanel: {
     backgroundColor: '#ffffff',
