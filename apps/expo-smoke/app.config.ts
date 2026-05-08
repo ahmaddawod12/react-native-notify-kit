@@ -37,6 +37,7 @@ const getFcmPlugins = (): ExpoPlugin[] => {
         },
       },
     ],
+    './plugins/withRnfbStaticLibrariesExpo55',
     './plugins/withFirebaseAppDelegateExpo55',
   ];
 };
