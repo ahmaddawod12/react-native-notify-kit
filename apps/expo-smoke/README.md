@@ -10,7 +10,8 @@ This app is intentionally separate from `apps/smoke`, which remains the full Rea
 - Local workspace dependency: `react-native-notify-kit: workspace:*`.
 - Manual runtime checks for `getNotificationSettings`, `requestPermission`, Android channel creation/readback, `displayNotification`, `getDisplayedNotifications`, foreground `DELIVERED`/`PRESS`, `cancelNotification`, and `cancelAllNotifications`.
 - Config plugin resolution with iOS Notification Service Extension config validation and EAS `appExtensions` metadata.
-- No FCM, RNFirebase, Firebase plist/json files, deep links, callback HTTP server, trigger stress, foreground service, exact alarms, reboot recovery, or advanced Android action suite.
+- Opt-in iOS FCM runtime checks with RNFirebase, local Firebase plist, token capture, foreground FCM handling, and background message handling.
+- No Android FCM, deep links, callback HTTP server, trigger stress, foreground service, exact alarms, reboot recovery, or advanced Android action suite.
 
 ## Commands
 
@@ -34,6 +35,42 @@ yarn workspace react-native-notify-kit-expo-smoke start
 
 The generated `ios/`, `android/`, and `.expo/` directories are ignored because this fixture follows Expo Continuous Native Generation. The source of truth is `app.config.ts` plus the JS/TS files in this directory.
 
+## Opt-In iOS FCM Runtime
+
+FCM runtime is not required for the base Expo smoke. Enable it only for iPhone physical-device testing with:
+
+```sh
+EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1
+```
+
+Place the local Firebase iOS plist at:
+
+```txt
+apps/expo-smoke/firebase/GoogleService-Info.plist
+```
+
+The plist is ignored and must not be committed. `firebase-notifykittest.json`, `google-services.json`, service accounts, `.env.local`, and FCM tokens must also stay local.
+
+Run the FCM iOS flow from the repository root:
+
+```sh
+EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1 yarn smoke:expo:config
+EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1 yarn smoke:expo:prebuild:ios
+(cd apps/expo-smoke && EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1 npx expo run:ios --device)
+```
+
+Start the dev client, press `Request permission`, then press `Register FCM`. Copy the token from the `SMOKE:FCM_TOKEN` log line.
+
+Send test payloads from the repository root:
+
+```sh
+yarn build:rn:server
+IOS_FCM_TOKEN=<token> yarn send:test:fcm minimal
+IOS_FCM_TOKEN=<token> yarn send:test:fcm ios-attachment
+```
+
+Android FCM is outside the scope of this fixture.
+
 ## Runtime Markers
 
 The app writes short `SMOKE:*` markers to the Metro/device console and a readable summary to the on-screen log:
@@ -50,6 +87,14 @@ The app writes short `SMOKE:*` markers to the Metro/device console and a readabl
 - `SMOKE:FOREGROUND_EVENT_PRESS`
 - `SMOKE:CANCEL_OK`
 - `SMOKE:CANCEL_ALL_OK`
+- `SMOKE:FCM_REGISTERED`
+- `SMOKE:FCM_TOKEN`
+- `SMOKE:FCM_ON_MESSAGE`
+- `SMOKE:FCM_HANDLE_OK`
+- `SMOKE:FCM_BACKGROUND_MESSAGE`
+- `SMOKE:FCM_TOKEN_REFRESH`
+- `SMOKE:BACKGROUND_EVENT_PRESS`
+- `SMOKE:FCM_ERROR`
 - `SMOKE:ERROR`
 
 ## Manual iOS Check

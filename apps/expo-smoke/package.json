@@ -10,7 +10,10 @@
     "start": "expo start --dev-client"
   },
   "dependencies": {
+    "@react-native-firebase/app": "^21.14.0",
+    "@react-native-firebase/messaging": "^21.14.0",
     "expo": "~55.0.23",
+    "expo-build-properties": "55.0.13",
     "expo-dev-client": "~55.0.32",
     "react": "19.2.0",
     "react-native": "0.83.6",

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
 import {
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import notifee, {
 const CHANNEL_ID = 'expo-smoke-default';
 const CHANNEL_NAME = 'Expo Smoke Default';
 const MAX_LOG_ENTRIES = 80;
+const FCM_MODE_ENABLED = process.env.EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM === '1';
 
 type LogEntry = {
   id: number;
@@ -34,6 +36,9 @@ type SmokeAction = {
   onPress: () => void;
   disabled?: boolean;
 };
+
+type MessagingModule = typeof import('@react-native-firebase/messaging');
+type NotifyKitFcmMessage = Parameters<typeof notifee.handleFcmMessage>[0];
 
 const formatValue = (value: unknown): string => {
   if (typeof value === 'string') {
@@ -74,8 +79,7 @@ const summarizeSettings = (settings: NotificationSettings) => ({
 
 const getDisplayedNotificationId = (
   displayedNotification: Awaited<ReturnType<typeof notifee.getDisplayedNotifications>>[number],
-): string =>
-  displayedNotification.id ?? displayedNotification.notification.id ?? 'unknown';
+): string => displayedNotification.id ?? displayedNotification.notification.id ?? 'unknown';
 
 const getChannelIds = (channels: Awaited<ReturnType<typeof notifee.getChannels>>): string[] =>
   channels.map(channel => channel.id);
@@ -94,9 +98,12 @@ const logSkip = 'Skip: Android-only action.';
 const getErrorMarkerDetail = (scenario: string, error: unknown): string =>
   trimMarkerDetail(`${scenario} ${getErrorMessage(error)}`);
 
-const getSettingsLogValue = (settings: NotificationSettings): unknown => summarizeSettings(settings);
+const getSettingsLogValue = (settings: NotificationSettings): unknown =>
+  summarizeSettings(settings);
 
-const getChannelsLogValue = (channels: Awaited<ReturnType<typeof notifee.getChannels>>): unknown => ({
+const getChannelsLogValue = (
+  channels: Awaited<ReturnType<typeof notifee.getChannels>>,
+): unknown => ({
   count: channels.length,
   ids: getChannelIds(channels).slice(0, 8),
 });
@@ -108,18 +115,21 @@ const getDisplayedLogValue = (
   ids: displayedNotifications.map(getDisplayedNotificationId),
 });
 
-const getForegroundLogValue = (
-  eventName: string,
-  notificationId: string | undefined,
-): unknown => ({
+const getForegroundLogValue = (eventName: string, notificationId: string | undefined): unknown => ({
   type: eventName,
   notificationId: notificationId ?? 'none',
 });
 
+const getRemoteMessageMarkerDetail = (
+  remoteMessage: FirebaseMessagingTypes.RemoteMessage,
+): string => remoteMessage.messageId ?? remoteMessage.from ?? 'unknown';
+
 export default function App(): React.JSX.Element {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [lastNotificationId, setLastNotificationId] = useState<string | undefined>();
+  const fcmTokenRef = useRef<string | undefined>(undefined);
   const nextLogIdRef = useRef(0);
+  const isFcmRuntimeEnabled = FCM_MODE_ENABLED && Platform.OS === 'ios';
 
   const addLog = useCallback((message: string, options: LogOptions = {}) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -132,7 +142,10 @@ export default function App(): React.JSX.Element {
     console.log(consoleLine);
     setLogs(currentLogs => {
       nextLogIdRef.current += 1;
-      return [{ id: nextLogIdRef.current, message: line }, ...currentLogs].slice(0, MAX_LOG_ENTRIES);
+      return [{ id: nextLogIdRef.current, message: line }, ...currentLogs].slice(
+        0,
+        MAX_LOG_ENTRIES,
+      );
     });
   }, []);
 
@@ -147,6 +160,24 @@ export default function App(): React.JSX.Element {
     },
     [addLog],
   );
+
+  const logFcmError = useCallback(
+    (scenario: string, error: unknown) => {
+      const message = getErrorMessage(error);
+      addLog(`FCM ${scenario} failed`, {
+        marker: 'SMOKE:FCM_ERROR',
+        markerDetail: getErrorMarkerDetail(scenario, error),
+        value: message,
+      });
+    },
+    [addLog],
+  );
+
+  const getMessaging = useCallback((): FirebaseMessagingTypes.Module => {
+    require('@react-native-firebase/app');
+    const messagingModule = require('@react-native-firebase/messaging') as MessagingModule;
+    return messagingModule.default();
+  }, []);
 
   useEffect(() => {
     addLog('App started', {
@@ -191,6 +222,57 @@ export default function App(): React.JSX.Element {
     return unsubscribe;
   }, [addLog, logError]);
 
+  useEffect(() => {
+    if (!FCM_MODE_ENABLED) {
+      return undefined;
+    }
+
+    if (!isFcmRuntimeEnabled) {
+      addLog('Skip: iOS-only FCM mode.');
+      return undefined;
+    }
+
+    try {
+      const messaging = getMessaging();
+      const unsubscribeMessage = messaging.onMessage(async remoteMessage => {
+        addLog('FCM foreground message', {
+          marker: 'SMOKE:FCM_ON_MESSAGE',
+          markerDetail: getRemoteMessageMarkerDetail(remoteMessage),
+        });
+
+        try {
+          const result = await notifee.handleFcmMessage(remoteMessage as NotifyKitFcmMessage);
+          addLog('FCM foreground handled', {
+            marker: 'SMOKE:FCM_HANDLE_OK',
+            markerDetail: result ?? 'null',
+            value: {
+              result,
+            },
+          });
+        } catch (error) {
+          logFcmError('foreground', error);
+        }
+      });
+
+      const unsubscribeToken = messaging.onTokenRefresh(token => {
+        fcmTokenRef.current = token;
+        addLog('FCM token refreshed', {
+          marker: 'SMOKE:FCM_TOKEN_REFRESH',
+          markerDetail: token,
+          value: token,
+        });
+      });
+
+      return () => {
+        unsubscribeMessage();
+        unsubscribeToken();
+      };
+    } catch (error) {
+      logFcmError('listener', error);
+      return undefined;
+    }
+  }, [addLog, getMessaging, isFcmRuntimeEnabled, logFcmError]);
+
   const getNotificationSettings = useCallback(async () => {
     try {
       const settings = await notifee.getNotificationSettings();
@@ -218,38 +300,41 @@ export default function App(): React.JSX.Element {
     }
   }, [addLog, logError]);
 
-  const ensureAndroidChannel = useCallback(async (showIosSkip = false) => {
-    if (Platform.OS !== 'android') {
-      if (showIosSkip) {
-        addLog(logSkip);
+  const ensureAndroidChannel = useCallback(
+    async (showIosSkip = false) => {
+      if (Platform.OS !== 'android') {
+        if (showIosSkip) {
+          addLog(logSkip);
+        }
+        return undefined;
       }
-      return undefined;
-    }
 
-    const channelId = await notifee.createChannel({
-      id: CHANNEL_ID,
-      name: CHANNEL_NAME,
-      importance: AndroidImportance.HIGH,
-    });
-    addLog('Android channel ready', {
-      marker: 'SMOKE:CHANNEL_CREATED',
-      markerDetail: channelId,
-      value: {
-        id: channelId,
-      },
-    });
-
-    if (hasGetChannels()) {
-      const channels = await notifee.getChannels();
-      addLog('Android channels', {
-        marker: 'SMOKE:CHANNELS_COUNT',
-        markerDetail: channels.length,
-        value: getChannelsLogValue(channels),
+      const channelId = await notifee.createChannel({
+        id: CHANNEL_ID,
+        name: CHANNEL_NAME,
+        importance: AndroidImportance.HIGH,
       });
-    }
+      addLog('Android channel ready', {
+        marker: 'SMOKE:CHANNEL_CREATED',
+        markerDetail: channelId,
+        value: {
+          id: channelId,
+        },
+      });
 
-    return channelId;
-  }, [addLog]);
+      if (hasGetChannels()) {
+        const channels = await notifee.getChannels();
+        addLog('Android channels', {
+          marker: 'SMOKE:CHANNELS_COUNT',
+          markerDetail: channels.length,
+          value: getChannelsLogValue(channels),
+        });
+      }
+
+      return channelId;
+    },
+    [addLog],
+  );
 
   const ensureAndroidChannelFromButton = useCallback(async () => {
     try {
@@ -337,6 +422,39 @@ export default function App(): React.JSX.Element {
     }
   }, [addLog, logError]);
 
+  const registerFcm = useCallback(async () => {
+    if (!isFcmRuntimeEnabled) {
+      addLog('Skip: iOS-only FCM mode.');
+      return;
+    }
+
+    try {
+      const messaging = getMessaging();
+      const authorizationStatus = await messaging.requestPermission();
+
+      await messaging.registerDeviceForRemoteMessages();
+
+      const token = await messaging.getToken();
+      fcmTokenRef.current = token;
+
+      addLog('FCM token', {
+        marker: 'SMOKE:FCM_TOKEN',
+        markerDetail: token,
+        value: token,
+      });
+      addLog('FCM registered', {
+        marker: 'SMOKE:FCM_REGISTERED',
+        markerDetail: authorizationStatus,
+        value: {
+          authorizationStatus,
+          tokenLength: token.length,
+        },
+      });
+    } catch (error) {
+      logFcmError('register', error);
+    }
+  }, [addLog, getMessaging, isFcmRuntimeEnabled, logFcmError]);
+
   const clearLog = useCallback(() => {
     setLogs([]);
   }, []);
@@ -390,6 +508,38 @@ export default function App(): React.JSX.Element {
     ],
   );
 
+  const fcmActions = useMemo<SmokeAction[]>(
+    () =>
+      FCM_MODE_ENABLED
+        ? [
+            {
+              label: 'Register FCM',
+              onPress: registerFcm,
+              disabled: !isFcmRuntimeEnabled,
+            },
+          ]
+        : [],
+    [isFcmRuntimeEnabled, registerFcm],
+  );
+
+  const renderActionButton = (action: SmokeAction) => (
+    <Pressable
+      accessibilityRole="button"
+      disabled={action.disabled}
+      key={action.label}
+      onPress={action.onPress}
+      style={({ pressed }) => [
+        styles.button,
+        pressed && styles.buttonPressed,
+        action.disabled && styles.buttonDisabled,
+      ]}
+    >
+      <Text style={[styles.buttonText, action.disabled && styles.buttonTextDisabled]}>
+        {action.label}
+      </Text>
+    </Pressable>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
@@ -398,25 +548,14 @@ export default function App(): React.JSX.Element {
           <Text style={styles.subtitle}>Expo CNG fixture for react-native-notify-kit.</Text>
         </View>
 
-        <View style={styles.actions}>
-          {actions.map(action => (
-            <Pressable
-              accessibilityRole="button"
-              disabled={action.disabled}
-              key={action.label}
-              onPress={action.onPress}
-              style={({ pressed }) => [
-                styles.button,
-                pressed && styles.buttonPressed,
-                action.disabled && styles.buttonDisabled,
-              ]}
-            >
-              <Text style={[styles.buttonText, action.disabled && styles.buttonTextDisabled]}>
-                {action.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <View style={styles.actions}>{actions.map(renderActionButton)}</View>
+
+        {fcmActions.length > 0 ? (
+          <View style={styles.fcmSection}>
+            <Text style={styles.sectionTitle}>FCM</Text>
+            {fcmActions.map(renderActionButton)}
+          </View>
+        ) : null}
 
         <View style={styles.logPanel}>
           <Text style={styles.logTitle}>Log</Text>
@@ -462,6 +601,14 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: 12,
+  },
+  fcmSection: {
+    gap: 10,
+  },
+  sectionTitle: {
+    color: '#102033',
+    fontSize: 14,
+    fontWeight: '700',
   },
   button: {
     alignItems: 'center',
