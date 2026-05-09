@@ -135,6 +135,9 @@ const getPressMarkerDetail = ({
   return fields.filter(Boolean).join(' ');
 };
 
+const getInitialNotificationMarkerDetail = (pressDetail: PressMarkerDetailSource): string =>
+  [`platform=${formatMarkerField(Platform.OS)}`, getPressMarkerDetail(pressDetail)].join(' ');
+
 const getLocalNotificationId = (): string => `expo-smoke-local-${Date.now()}`;
 
 const hasGetChannels = (): boolean => typeof notifee.getChannels === 'function';
@@ -302,7 +305,9 @@ export default function App(): React.JSX.Element {
   }, [addLog, logError]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || didCheckInitialNotificationRef.current) {
+    const canCheckInitialNotification = Platform.OS === 'android' || Platform.OS === 'ios';
+
+    if (!canCheckInitialNotification || didCheckInitialNotificationRef.current) {
       return;
     }
 
@@ -322,7 +327,7 @@ export default function App(): React.JSX.Element {
 
         addLog('Initial notification press', {
           marker: 'SMOKE:INITIAL_NOTIFICATION_PRESS',
-          markerDetail: getPressMarkerDetail(pressDetail),
+          markerDetail: getInitialNotificationMarkerDetail(pressDetail),
           value: getPressLogValue(pressDetail),
         });
       })
