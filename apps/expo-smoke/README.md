@@ -35,6 +35,37 @@ yarn workspace react-native-notify-kit-expo-smoke start
 
 The generated `ios/`, `android/`, and `.expo/` directories are ignored because this fixture follows Expo Continuous Native Generation. The source of truth is `app.config.ts` plus the JS/TS files in this directory.
 
+## EAS Build Smoke
+
+EAS Build configuration is local to this fixture in `apps/expo-smoke/eas.json`. The `development` profile creates development client builds with internal distribution and enables the FCM smoke gate with:
+
+```sh
+EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1
+```
+
+The Android profile override produces an installable APK for controlled remote smoke validation:
+
+```sh
+cd apps/expo-smoke
+npx eas-cli build --platform android --profile development
+```
+
+iOS can use the same profile for a device development build when Apple credentials and Firebase inputs are available:
+
+```sh
+cd apps/expo-smoke
+npx eas-cli build --platform ios --profile development
+```
+
+The real Firebase config files are intentionally not committed:
+
+```txt
+apps/expo-smoke/firebase/GoogleService-Info.plist
+apps/expo-smoke/firebase/google-services.json
+```
+
+For remote EAS Build, provide those files on the builder through a secure maintainer-controlled mechanism, such as EAS file secrets, EAS environment variables/secrets, or a pre-install hook/script that materializes the files without committing them. This task does not implement that secret delivery mechanism. Without both files present on the remote builder, the FCM-enabled Expo config will fail during config/prebuild evaluation.
+
 ## Opt-In FCM Runtime
 
 FCM runtime is not required for the base Expo smoke. Enable it only for Firebase-backed development build testing with:
