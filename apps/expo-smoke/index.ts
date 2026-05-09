@@ -87,6 +87,33 @@ const logAndroidChannelReady = (channelId?: string): void => {
   console.log(`SMOKE:FCM_ANDROID_CHANNEL_READY ${channelId ?? FCM_SMOKE_CHANNEL_ID}`);
 };
 
+const configureNotifyKitBackgroundEvents = (): void => {
+  if (!isFcmSmokeRuntimePlatform()) {
+    return;
+  }
+
+  try {
+    notifee.onBackgroundEvent(async ({ type, detail }) => {
+      if (type === EventType.PRESS || type === EventType.ACTION_PRESS) {
+        console.log(
+          `SMOKE:BACKGROUND_EVENT_PRESS ${getPressMarkerDetail({
+            typeName: getEventTypeName(type),
+            notification: detail.notification,
+            pressAction: detail.pressAction,
+          })}`,
+        );
+      }
+    });
+    console.log(`SMOKE:NOTIFEE_BACKGROUND_EVENT_HANDLER_REGISTERED ${Platform.OS}`);
+  } catch (error) {
+    console.log(
+      `SMOKE:NOTIFEE_BACKGROUND_EVENT_HANDLER_ERROR ${trimMarkerDetail(
+        getErrorMessage(error),
+      )}`,
+    );
+  }
+};
+
 const configureFcmMode = (): void => {
   if (!isFcmModeEnabled) {
     return;
@@ -125,23 +152,12 @@ const configureFcmMode = (): void => {
       }
     });
     console.log(`SMOKE:FCM_BACKGROUND_HANDLER_REGISTERED ${Platform.OS}`);
-
-    notifee.onBackgroundEvent(async ({ type, detail }) => {
-      if (type === EventType.PRESS || type === EventType.ACTION_PRESS) {
-        console.log(
-          `SMOKE:BACKGROUND_EVENT_PRESS ${getPressMarkerDetail({
-            typeName: getEventTypeName(type),
-            notification: detail.notification,
-            pressAction: detail.pressAction,
-          })}`,
-        );
-      }
-    });
   } catch (error) {
     console.log(`SMOKE:FCM_ERROR setup ${trimMarkerDetail(getErrorMessage(error))}`);
   }
 };
 
+configureNotifyKitBackgroundEvents();
 configureFcmMode();
 
 registerRootComponent(App);
