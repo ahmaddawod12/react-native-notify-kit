@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Expo / iOS**: fixed `NotifyKitNSE` Podfile `use_frameworks!` inheritance so the extension matches the host target linkage, including static/dynamic frameworks and Expo conditional Podfile properties.
 - **Expo / iOS**: existing generated `NotifyKitNSE` targets are normalized for version/build metadata and Podfile linkage instead of requiring manual deletion/regeneration.
 - **iOS / EAS**: fixed another precompiled-modules header visibility issue by making `NotifeeApiModule.mm` import `NotifeeCore+UNUserNotificationCenter.h` through a relative `NotifeeCore` path. This avoids a reported `'NotifeeCore+UNUserNotificationCenter.h' file not found` failure in EAS builds with precompiled modules enabled. Building from source was not affected.
+- **Expo smoke app / iOS**: configured targeted static linking for the RNFirebase pods used by the fixture (`RNFBApp` and `RNFBMessaging`) when `ios.useFrameworks: "static"` is enabled.
 
 ### Tests
 
-- **Expo smoke app / iOS**: validated clean Expo iOS prebuild and CocoaPods install with RNFirebase, NotifyKit NSE enabled, `ios.useFrameworks` static, correct NSE metadata, and static-frameworks Podfile linkage.
+- **Expo smoke app / iOS**: aligned the RNFirebase smoke fixture with Expo static-frameworks builds by adding `ios.forceStaticLinking` for `RNFBApp` and `RNFBMessaging`. The iOS smoke fixture was validated locally with `EXPO_USE_PRECOMPILED_MODULES=1`, clean Expo prebuild, CocoaPods install, and build/install on a physical iPhone.
 - **Validation**: reviewed the iOS import graph to ensure `RNNotifee` no longer uses bare sibling imports for `NotifeeCore` headers involved in the reported precompiled-modules failure.
 
 ## [10.4.1] - 2026-05-11

@@ -13,6 +13,8 @@ If your app uses Expo CNG and a generated `NotifyKitNSE`, upgrading to 10.4.2 av
 
 10.4.2 also avoids a reported iOS precompiled-modules build failure where `NotifeeApiModule.mm` could not resolve `NotifeeCore+UNUserNotificationCenter.h`. The import now uses the same relative `NotifeeCore` path style as the existing `NotifeeCore.h` import. This is a compile-time-only fix.
 
+The Expo smoke iOS fixture now uses `ios.forceStaticLinking` for `RNFBApp` and `RNFBMessaging`, because the fixture includes RNFirebase and uses `ios.useFrameworks: "static"`. This avoids the local RNFirebase non-modular-header failure seen under precompiled Expo Modules.
+
 ### Expo iOS
 
 - Fixed generated `NotifyKitNSE` version/build metadata so the extension mirrors the parent Expo app version/build in `Info.plist` and Xcode build settings.
@@ -23,8 +25,10 @@ If your app uses Expo CNG and a generated `NotifyKitNSE`, upgrading to 10.4.2 av
 
 ### Validation
 
-- Validated the Expo smoke app iOS prebuild and CocoaPods install with RNFirebase, NotifyKit NSE enabled, `ios.useFrameworks` static, correct NSE metadata, and static-frameworks Podfile linkage.
-- EAS iOS cloud build was not part of this validation and remains a separate gate requiring Apple credentials/provisioning.
+- Validated locally with `EXPO_USE_PRECOMPILED_MODULES=1`, clean iOS prebuild, CocoaPods install, and physical iPhone build/install.
+- Public JS API unchanged.
+- NotifyKit runtime notification behavior unchanged.
+- EAS iOS cloud build was not run as part of this validation and remains a separate gate requiring Apple credentials/provisioning.
 
 ## [10.4.1] (2026-05-11)
 
