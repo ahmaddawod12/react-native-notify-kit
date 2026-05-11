@@ -20,6 +20,9 @@ out/
 # Gradle files
 .gradle/
 build/
+# Keep the Expo config plugin build output available for EAS workspace builds.
+!packages/react-native/plugin/build/
+!packages/react-native/plugin/build/**
 
 # Local configuration file (sdk path, etc)
 local.properties
