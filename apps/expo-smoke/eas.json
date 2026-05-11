@@ -5,6 +5,7 @@
   "build": {
     "development": {
       "environment": "development",
+      "corepack": true,
       "developmentClient": true,
       "distribution": "internal",
       "env": {
