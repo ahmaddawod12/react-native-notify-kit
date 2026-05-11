@@ -19,7 +19,7 @@
 #import <React/RCTUtils.h>
 #import <UIKit/UIKit.h>
 #import "../NotifeeCore/NotifeeCore.h"
-#import "NotifeeCore+UNUserNotificationCenter.h"
+#import "../NotifeeCore/NotifeeCore+UNUserNotificationCenter.h"
 
 @interface NotifeeApiModule () <NotifeeCoreDelegate>
 @end
