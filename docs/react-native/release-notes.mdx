@@ -5,6 +5,26 @@ description: react-native-notify-kit API releases
 
 ## Unreleased (next release)
 
+This 10.4.1 patch fixes an iOS static-frameworks header visibility issue and records the latest Expo smoke fixture EAS validation work. It does not change the public JavaScript API.
+
+### iOS
+
+- Fixed a static-frameworks header visibility issue where the public `NotifeeApiModule.h` header imported `NotifeeCore.h`. In clean Expo/EAS or CocoaPods builds using static frameworks, this could surface as `'NotifeeCore.h' file not found` while compiling `RNNotifee`.
+- The `NotifeeCore` dependency is now kept private to the implementation file instead of being exposed through the public API module header.
+
+### Expo Smoke EAS
+
+- Hardened the Expo smoke fixture for EAS validation by supporting Firebase file environment variables, enabling Corepack/Yarn 4 for the EAS development profile, making the dynamic Expo config compatible with the EAS config reader, and preserving the NotifyKit config plugin build output in the EAS archive.
+- Validated Android EAS Build for the Expo smoke fixture, including Firebase file env secrets, NotifyKit config plugin resolution, RNFirebase config, Gradle build, and APK artifact generation.
+
+### Validation Limits
+
+- Android EAS validation was limited to the Expo smoke fixture and produced an APK artifact.
+- The APK artifact was not used for a full runtime FCM smoke in that validation pass.
+- EAS iOS cloud build was not part of this validation and remains a separate gate requiring Apple credentials/provisioning.
+- Expo Go remains unsupported because NotifyKit requires native modules and native notification targets/capabilities.
+- Existing iOS background JS `PRESS` marker and killed-state tap validation limits still apply.
+
 ## [10.4.0] (2026-05-09)
 
 Release focused on the first official Expo CNG integration for development builds across iOS and Android. This is support for Expo prebuild and development builds, not Expo Go.

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **iOS / Expo**: fixed a static-frameworks header visibility issue where `NotifeeApiModule.h` publicly imported `NotifeeCore.h`, which could fail on clean Expo/EAS or CocoaPods builds with `'NotifeeCore.h' file not found`.
+
+### Tests
+
+- **Expo smoke app / EAS**: hardened the Expo smoke fixture for EAS builds by supporting Firebase file environment variables, enabling Corepack/Yarn 4 on EAS, making the dynamic Expo config compatible with the EAS config reader, and preserving the NotifyKit config plugin build output in the EAS archive.
+- **Expo smoke app / Android EAS**: validated Android EAS Build for the Expo smoke fixture, including Firebase file env secrets, NotifyKit config plugin resolution, RNFirebase config, Gradle build, and APK artifact generation.
+
 ## [10.4.0] - 2026-05-09
 
 ### Added

@@ -80,6 +80,16 @@ npx eas-cli env:list --environment development --scope project
 
 When `EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1` is active, both file env variables are currently required because the shared Expo config still validates iOS and Android Firebase inputs together. Do not use `--include-file-content` when showing or sharing env output. Do not commit the real Firebase files or put Firebase file contents in `eas.json`.
 
+### Validation status
+
+Android EAS Build was validated for this smoke fixture with the `development` profile. The remote build resolved Firebase file environment variables, enabled Corepack/Yarn 4, loaded the dynamic Expo config through the EAS config reader, resolved the NotifyKit config plugin from the workspace archive, ran prebuild/Gradle, and produced an APK artifact.
+
+The APK artifact was not used for a full runtime FCM smoke in that validation pass.
+
+EAS iOS cloud build has not been validated yet. EAS iOS validation requires Apple credentials/provisioning and should be treated as a separate gate.
+
+This validation is for the Expo smoke fixture only and is not a generic guarantee for all consumer EAS builds.
+
 ## Opt-In FCM Runtime
 
 FCM runtime is not required for the base Expo smoke. Enable it only for Firebase-backed development build testing with:
