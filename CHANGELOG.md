@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [10.4.1] - 2026-05-11
+
 ### Fixed
 
 - **iOS / Expo**: fixed a static-frameworks header visibility issue where `NotifeeApiModule.h` publicly imported `NotifeeCore.h`, which could fail on clean Expo/EAS or CocoaPods builds with `'NotifeeCore.h' file not found`.
