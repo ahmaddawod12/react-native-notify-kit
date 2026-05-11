@@ -37,7 +37,7 @@ The generated `ios/`, `android/`, and `.expo/` directories are ignored because t
 
 ## EAS Build Smoke
 
-EAS Build configuration is local to this fixture in `apps/expo-smoke/eas.json`. The `development` profile creates development client builds with internal distribution and enables the FCM smoke gate with:
+EAS Build configuration is local to this fixture in `apps/expo-smoke/eas.json`. The `development` profile uses `environment: development`, creates development client builds with internal distribution, and enables the FCM smoke gate with:
 
 ```sh
 EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1
@@ -64,7 +64,21 @@ apps/expo-smoke/firebase/GoogleService-Info.plist
 apps/expo-smoke/firebase/google-services.json
 ```
 
-For remote EAS Build, provide those files on the builder through a secure maintainer-controlled mechanism, such as EAS file secrets, EAS environment variables/secrets, or a pre-install hook/script that materializes the files without committing them. This task does not implement that secret delivery mechanism. Without both files present on the remote builder, the FCM-enabled Expo config will fail during config/prebuild evaluation.
+For remote EAS Build, provide those files with EAS file environment variables in the `development` environment. The Expo config reads the file paths from:
+
+- `GOOGLE_SERVICES_JSON`
+- `GOOGLE_SERVICE_INFO_PLIST`
+
+Create them from local Firebase files:
+
+```sh
+cd apps/expo-smoke
+npx eas-cli env:create --environment development --scope project --visibility secret --type file --name GOOGLE_SERVICES_JSON --value ./firebase/google-services.json
+npx eas-cli env:create --environment development --scope project --visibility secret --type file --name GOOGLE_SERVICE_INFO_PLIST --value ./firebase/GoogleService-Info.plist
+npx eas-cli env:list --environment development --scope project
+```
+
+When `EXPO_PUBLIC_NOTIFYKIT_EXPO_SMOKE_FCM=1` is active, both file env variables are currently required because the shared Expo config still validates iOS and Android Firebase inputs together. Do not use `--include-file-content` when showing or sharing env output. Do not commit the real Firebase files or put Firebase file contents in `eas.json`.
 
 ## Opt-In FCM Runtime
 
