@@ -4,6 +4,8 @@ const NSE_TARGET_NAME_PATTERN = /^[A-Za-z0-9_\-.]+$/;
 const NSE_BUNDLE_SUFFIX_PATTERN = /^\.[A-Za-z0-9\-.]+$/;
 
 const PRODUCT_BUNDLE_IDENTIFIER_PLACEHOLDER = '$(PRODUCT_BUNDLE_IDENTIFIER:default)';
+const DEFAULT_NSE_MARKETING_VERSION = '1.0';
+const DEFAULT_NSE_CURRENT_PROJECT_VERSION = '1';
 
 const NOTIFICATION_SERVICE_SWIFT = String.raw`import Foundation
 import UserNotifications
@@ -124,9 +126,9 @@ const NSE_INFO_PLIST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 \t<key>CFBundlePackageType</key>
 \t<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 \t<key>CFBundleShortVersionString</key>
-\t<string>1.0</string>
+\t<string>{{MARKETING_VERSION}}</string>
 \t<key>CFBundleVersion</key>
-\t<string>1</string>
+\t<string>{{CURRENT_PROJECT_VERSION}}</string>
 \t<key>NSExtension</key>
 \t<dict>
 \t\t<key>NSExtensionPointIdentifier</key>
@@ -185,7 +187,13 @@ function renderNotificationServiceSwift() {
 }
 
 function renderNseInfoPlist(options) {
-  return NSE_INFO_PLIST_TEMPLATE.replace(/\{\{TARGET_NAME\}\}/g, options.targetName);
+  const marketingVersion = options.marketingVersion ?? DEFAULT_NSE_MARKETING_VERSION;
+  const currentProjectVersion =
+    options.currentProjectVersion ?? DEFAULT_NSE_CURRENT_PROJECT_VERSION;
+
+  return NSE_INFO_PLIST_TEMPLATE.replace(/\{\{TARGET_NAME\}\}/g, options.targetName)
+    .replace(/\{\{MARKETING_VERSION\}\}/g, marketingVersion)
+    .replace(/\{\{CURRENT_PROJECT_VERSION\}\}/g, currentProjectVersion);
 }
 
 function renderNseEntitlementsPlist() {
@@ -211,6 +219,8 @@ function toRfc1034Identifier(value) {
 }
 
 module.exports = {
+  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  DEFAULT_NSE_MARKETING_VERSION,
   deriveNseBundleIdentifier,
   renderNotificationServiceSwift,
   renderNseEntitlementsPlist,

@@ -95,14 +95,6 @@ const getFcmPlugins = () => {
   return [
     '@react-native-firebase/app',
     '@react-native-firebase/messaging',
-    [
-      'expo-build-properties',
-      {
-        ios: {
-          useFrameworks: 'static',
-        },
-      },
-    ],
     './plugins/withRnfbStaticLibrariesExpo55',
     './plugins/withFirebaseAppDelegateExpo55',
   ];
@@ -147,6 +139,14 @@ module.exports = ({ config }) => ({
   },
   plugins: [
     ...(config.plugins ?? []),
+    [
+      'expo-build-properties',
+      {
+        ios: {
+          useFrameworks: 'static',
+        },
+      },
+    ],
     ...getFcmPlugins(),
     [
       'react-native-notify-kit',

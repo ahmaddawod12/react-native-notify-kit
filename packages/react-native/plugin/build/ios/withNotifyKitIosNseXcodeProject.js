@@ -1,6 +1,10 @@
 'use strict';
 
 const {
+  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  DEFAULT_NSE_MARKETING_VERSION,
+} = require('../shared/nse/initNseCore');
+const {
   patchXcodeProjectForNotifyKitNse,
 } = require('../shared/nse/patchXcodeProject');
 const {
@@ -20,6 +24,7 @@ function withNotifyKitIosNseXcodeProject(config, nseOptions) {
       targetName: nseOptions.targetName,
       bundleIdentifier,
       parentTargetName: modConfig.modRequest.projectName,
+      ...resolveNseVersionOptions(modConfig),
     });
 
     if (result.didChange && !result.hostTargetUuid) {
@@ -30,6 +35,18 @@ function withNotifyKitIosNseXcodeProject(config, nseOptions) {
 
     return modConfig;
   });
+}
+
+function resolveNseVersionOptions(config) {
+  return {
+    marketingVersion: optionalString(config.version) ?? DEFAULT_NSE_MARKETING_VERSION,
+    currentProjectVersion:
+      optionalString(config.ios?.buildNumber) ?? DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  };
+}
+
+function optionalString(value) {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function requireExpoConfigPlugins() {

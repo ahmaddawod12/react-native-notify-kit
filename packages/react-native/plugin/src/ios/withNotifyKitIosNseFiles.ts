@@ -3,6 +3,8 @@ import * as path from 'path';
 
 import type { NormalizedIosNotificationServiceExtensionOptions } from '../options';
 import {
+  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  DEFAULT_NSE_MARKETING_VERSION,
   renderNotificationServiceSwift,
   renderNseEntitlementsPlist,
   renderNseInfoPlist,
@@ -35,6 +37,14 @@ declare const process: {
   cwd(): string;
 };
 
+const MARKETING_VERSION_MARKER = '__NOTIFYKIT_NSE_MARKETING_VERSION__';
+const CURRENT_PROJECT_VERSION_MARKER = '__NOTIFYKIT_NSE_CURRENT_PROJECT_VERSION__';
+
+interface NotifyKitNseVersionOptions {
+  marketingVersion: string;
+  currentProjectVersion: string;
+}
+
 export function withNotifyKitIosNseFiles<TConfig extends ExpoConfigLike>(
   config: TConfig,
   nseOptions: NormalizedIosNotificationServiceExtensionOptions,
@@ -51,6 +61,7 @@ export function withNotifyKitIosNseFiles<TConfig extends ExpoConfigLike>(
       writeNotifyKitIosNseFiles(
         modConfig.modRequest.platformProjectRoot,
         nseOptions.targetName,
+        resolveNseVersionOptions(modConfig),
       );
       return modConfig;
     },
@@ -60,6 +71,10 @@ export function withNotifyKitIosNseFiles<TConfig extends ExpoConfigLike>(
 export function writeNotifyKitIosNseFiles(
   platformProjectRoot: string,
   targetName: string,
+  versionOptions: NotifyKitNseVersionOptions = {
+    marketingVersion: DEFAULT_NSE_MARKETING_VERSION,
+    currentProjectVersion: DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  },
 ): void {
   const targetDir = path.join(platformProjectRoot, targetName);
   fs.mkdirSync(targetDir, { recursive: true });
@@ -70,7 +85,8 @@ export function writeNotifyKitIosNseFiles(
   );
   writeFileIfMissingOrIdentical(
     path.join(targetDir, 'Info.plist'),
-    renderNseInfoPlist({ targetName }),
+    renderNseInfoPlist({ targetName, ...versionOptions }),
+    contents => isGeneratedNseInfoPlist(contents, targetName),
   );
   writeFileIfMissingOrIdentical(
     path.join(targetDir, `${targetName}.entitlements`),
@@ -78,10 +94,48 @@ export function writeNotifyKitIosNseFiles(
   );
 }
 
-function writeFileIfMissingOrIdentical(filePath: string, contents: string): void {
+function resolveNseVersionOptions(config: ExpoConfigLike): NotifyKitNseVersionOptions {
+  return {
+    marketingVersion: optionalString(config.version) ?? DEFAULT_NSE_MARKETING_VERSION,
+    currentProjectVersion:
+      optionalString(config.ios?.buildNumber) ?? DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  };
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isGeneratedNseInfoPlist(contents: string, targetName: string): boolean {
+  const templateWithMarkers = renderNseInfoPlist({
+    targetName,
+    marketingVersion: MARKETING_VERSION_MARKER,
+    currentProjectVersion: CURRENT_PROJECT_VERSION_MARKER,
+  });
+  const escapedTemplate = escapeRegExp(templateWithMarkers)
+    .replace(MARKETING_VERSION_MARKER, '[^<]*')
+    .replace(CURRENT_PROJECT_VERSION_MARKER, '[^<]*');
+
+  return new RegExp(`^${escapedTemplate}$`).test(contents);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function writeFileIfMissingOrIdentical(
+  filePath: string,
+  contents: string,
+  canOverwrite?: (currentContents: string) => boolean,
+): void {
   if (fs.existsSync(filePath)) {
     const currentContents = fs.readFileSync(filePath, 'utf8');
     if (currentContents !== contents) {
+      if (canOverwrite?.(currentContents)) {
+        fs.writeFileSync(filePath, contents, 'utf8');
+        return;
+      }
+
       throw new Error(
         `[react-native-notify-kit] Refusing to overwrite existing ${filePath}. ` +
           'Delete it or make it match the generated NotifyKit NSE template.',

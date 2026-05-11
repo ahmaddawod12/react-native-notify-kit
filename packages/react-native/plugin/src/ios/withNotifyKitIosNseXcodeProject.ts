@@ -1,5 +1,9 @@
 import type { NormalizedIosNotificationServiceExtensionOptions } from '../options';
 import {
+  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  DEFAULT_NSE_MARKETING_VERSION,
+} from '../shared/nse/initNseCore';
+import {
   patchXcodeProjectForNotifyKitNse,
   type XcodeProject,
 } from '../shared/nse/patchXcodeProject';
@@ -32,6 +36,11 @@ declare const process: {
   cwd(): string;
 };
 
+interface NotifyKitNseVersionOptions {
+  marketingVersion: string;
+  currentProjectVersion: string;
+}
+
 export function withNotifyKitIosNseXcodeProject<TConfig extends ExpoConfigLike>(
   config: TConfig,
   nseOptions: NormalizedIosNotificationServiceExtensionOptions,
@@ -48,6 +57,7 @@ export function withNotifyKitIosNseXcodeProject<TConfig extends ExpoConfigLike>(
       targetName: nseOptions.targetName,
       bundleIdentifier,
       parentTargetName: modConfig.modRequest.projectName,
+      ...resolveNseVersionOptions(modConfig),
     });
 
     if (result.didChange && !result.hostTargetUuid) {
@@ -58,6 +68,18 @@ export function withNotifyKitIosNseXcodeProject<TConfig extends ExpoConfigLike>(
 
     return modConfig;
   });
+}
+
+function resolveNseVersionOptions(config: ExpoConfigLike): NotifyKitNseVersionOptions {
+  return {
+    marketingVersion: optionalString(config.version) ?? DEFAULT_NSE_MARKETING_VERSION,
+    currentProjectVersion:
+      optionalString(config.ios?.buildNumber) ?? DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  };
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function requireExpoConfigPlugins(): {

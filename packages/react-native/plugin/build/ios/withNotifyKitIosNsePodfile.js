@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 
 const { patchPodfileForNotifyKitNse } = require('../shared/nse/patchPodfile');
@@ -14,11 +15,12 @@ function withNotifyKitIosNsePodfile(config, nseOptions) {
 
   return withPodfile(config, modConfig => {
     const { projectRoot, platformProjectRoot } = modConfig.modRequest;
-    const packagePathFromIos = resolveNotifyKitPackagePathFromIos(
-      projectRoot,
-      platformProjectRoot,
-    );
-    const hostUseFrameworks = detectPodfileUseFrameworks(modConfig.modResults.contents);
+    const packagePathFromIos = resolveNotifyKitPackagePathFromIos(projectRoot, platformProjectRoot);
+    const hostUseFrameworks = detectPodfileUseFrameworks(modConfig.modResults.contents, {
+      ignoredTargetName: nseOptions.targetName,
+      podfileProperties: readExpoPodfileProperties(platformProjectRoot),
+      env: process.env,
+    });
     const useFrameworks = resolveNseUseFrameworks(hostUseFrameworks, configuredUseFrameworks);
     const result = patchPodfileForNotifyKitNse(modConfig.modResults.contents, {
       targetName: nseOptions.targetName,
@@ -45,30 +47,56 @@ function normalizePodfilePath(filePath) {
   return filePath.replace(/\\/g, '/');
 }
 
-function detectPodfileUseFrameworks(contents) {
-  let detected = false;
+function detectPodfileUseFrameworks(contents, optionsOrIgnoredTargetName) {
+  const options =
+    typeof optionsOrIgnoredTargetName === 'string'
+      ? { ignoredTargetName: optionsOrIgnoredTargetName }
+      : (optionsOrIgnoredTargetName ?? {});
+  const targetBlocks = findTargetBlocks(contents);
+  const firstHostTarget = targetBlocks.find(
+    block => block.targetName !== options.ignoredTargetName,
+  );
+  let globalUseFrameworks = false;
+  let hostUseFrameworks = false;
+  let charIndex = 0;
 
   for (const line of contents.split('\n')) {
-    const stripped = line.replace(/#.*$/, '').trim();
-    if (!/^use_frameworks!(?:\s|$)/.test(stripped)) {
+    const detectedUseFrameworks = parseUseFrameworksLine(line, options);
+    if (detectedUseFrameworks === null) {
+      charIndex += line.length + 1;
       continue;
     }
 
-    if (/:linkage\s*=>\s*:static\b/.test(stripped) || /\blinkage:\s*:static\b/.test(stripped)) {
-      return 'static';
+    const targetBlock = findMostSpecificTargetBlock(targetBlocks, charIndex);
+    if (!targetBlock) {
+      globalUseFrameworks = mergeUseFrameworksDetection(globalUseFrameworks, detectedUseFrameworks);
+    } else if (targetBlock === firstHostTarget) {
+      hostUseFrameworks = mergeUseFrameworksDetection(hostUseFrameworks, detectedUseFrameworks);
     }
 
-    if (
-      /:linkage\s*=>\s*:dynamic\b/.test(stripped) ||
-      /\blinkage:\s*:dynamic\b/.test(stripped)
-    ) {
-      return 'dynamic';
-    }
-
-    detected = true;
+    charIndex += line.length + 1;
   }
 
-  return detected;
+  return hostUseFrameworks !== false ? hostUseFrameworks : globalUseFrameworks;
+}
+
+function readExpoPodfileProperties(platformProjectRoot) {
+  const propertiesPath = path.join(platformProjectRoot, 'Podfile.properties.json');
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(propertiesPath, 'utf8'));
+    return isPlainObject(parsed) ? parsed : {};
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+function isFileNotFoundError(error) {
+  return isPlainObject(error) && error.code === 'ENOENT';
 }
 
 function resolveNseUseFrameworks(hostUseFrameworks, configuredUseFrameworks) {
@@ -108,6 +136,177 @@ function detectConfiguredExpoBuildPropertiesUseFrameworks(config) {
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function findTargetBlocks(contents) {
+  const targetPattern = /^[ \t]*target\s+['"]([^'"]+)['"]\s+do\b.*$/gm;
+  const blocks = [];
+  let match;
+
+  while ((match = targetPattern.exec(contents)) !== null) {
+    const endLineStart = findMatchingRubyBlockEnd(contents, match.index);
+    if (endLineStart === -1) {
+      continue;
+    }
+
+    blocks.push({
+      targetName: match[1],
+      startIndex: match.index,
+      endIndex: findLineEnd(contents, endLineStart),
+    });
+  }
+
+  return blocks;
+}
+
+function findMostSpecificTargetBlock(targetBlocks, charIndex) {
+  return targetBlocks
+    .filter(block => charIndex >= block.startIndex && charIndex < block.endIndex)
+    .sort((a, b) => b.startIndex - a.startIndex)[0];
+}
+
+function parseUseFrameworksLine(line, options) {
+  const stripped = stripRubyLineComment(line).trim();
+  if (!/^use_frameworks!(?:\s|$)/.test(stripped)) {
+    return null;
+  }
+
+  if (!isUseFrameworksConditionActive(stripped, options)) {
+    return null;
+  }
+
+  const podfilePropertyLinkage = getPodfilePropertyUseFrameworksLinkage(stripped, options);
+  if (podfilePropertyLinkage !== null) {
+    return podfilePropertyLinkage;
+  }
+
+  const envLinkage = getEnvUseFrameworksLinkage(stripped, options);
+  if (envLinkage !== null) {
+    return envLinkage;
+  }
+
+  if (/:linkage\s*=>\s*:static\b/.test(stripped) || /\blinkage:\s*:static\b/.test(stripped)) {
+    return 'static';
+  }
+
+  if (/:linkage\s*=>\s*:dynamic\b/.test(stripped) || /\blinkage:\s*:dynamic\b/.test(stripped)) {
+    return 'dynamic';
+  }
+
+  return true;
+}
+
+function mergeUseFrameworksDetection(current, detected) {
+  return detected;
+}
+
+function isUseFrameworksConditionActive(strippedLine, options) {
+  const condition = strippedLine.match(/\s+if\s+(.+)$/)?.[1]?.trim();
+  if (!condition) {
+    return true;
+  }
+
+  const podfilePropertyName = getPodfilePropertyName(condition);
+  if (podfilePropertyName !== null) {
+    return isRubyTruthy(options.podfileProperties?.[podfilePropertyName]);
+  }
+
+  const envName = getEnvName(condition);
+  if (envName !== null) {
+    return isRubyTruthy(options.env?.[envName]);
+  }
+
+  return true;
+}
+
+function getPodfilePropertyUseFrameworksLinkage(strippedLine, options) {
+  const propertyName = strippedLine.match(
+    /(?:\:linkage\s*=>|linkage:)\s*podfile_properties\[['"]([^'"]+)['"]\](?:\.to_sym)?/,
+  )?.[1];
+
+  return propertyName
+    ? normalizeUseFrameworksValue(options.podfileProperties?.[propertyName])
+    : null;
+}
+
+function getEnvUseFrameworksLinkage(strippedLine, options) {
+  const envName = strippedLine.match(
+    /(?:\:linkage\s*=>|linkage:)\s*ENV\[['"]([^'"]+)['"]\](?:\.to_sym)?/,
+  )?.[1];
+
+  return envName ? normalizeUseFrameworksValue(options.env?.[envName]) : null;
+}
+
+function normalizeUseFrameworksValue(value) {
+  if (value === 'static' || value === 'dynamic' || value === true) {
+    return value;
+  }
+
+  return null;
+}
+
+function getPodfilePropertyName(expression) {
+  return expression.match(/^podfile_properties\[['"]([^'"]+)['"]\]$/)?.[1] ?? null;
+}
+
+function getEnvName(expression) {
+  return expression.match(/^ENV\[['"]([^'"]+)['"]\]$/)?.[1] ?? null;
+}
+
+function isRubyTruthy(value) {
+  return value !== undefined && value !== null && value !== false;
+}
+
+function findLineEnd(content, lineStartIndex) {
+  const newlineIndex = content.indexOf('\n', lineStartIndex);
+  return newlineIndex === -1 ? content.length : newlineIndex + 1;
+}
+
+function findMatchingRubyBlockEnd(content, startIndex) {
+  const afterStart = content.slice(startIndex);
+  const lines = afterStart.split('\n');
+  let depth = 0;
+  let charIndex = startIndex;
+
+  for (const line of lines) {
+    const trimmed = stripRubyLineComment(line).trim();
+
+    depth += countRubyBlockOpeners(trimmed);
+
+    if (trimmed === 'end') {
+      depth--;
+      if (depth === 0) {
+        return charIndex;
+      }
+    }
+
+    charIndex += line.length + 1;
+  }
+
+  return -1;
+}
+
+function countRubyBlockOpeners(line) {
+  if (line.length === 0) {
+    return 0;
+  }
+
+  const startsWithKeywordBlock = /^(if|unless|case|begin|while|until|for|def|class|module)\b/.test(
+    line,
+  );
+  if (startsWithKeywordBlock) {
+    return 1;
+  }
+
+  if (/\bdo\b(\s*\|[^|]*\|)?\s*$/.test(line)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function stripRubyLineComment(line) {
+  return line.replace(/#.*$/, '');
 }
 
 function requireExpoConfigPlugins() {

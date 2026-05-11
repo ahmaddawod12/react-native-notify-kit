@@ -83,6 +83,37 @@ describe('NotifyKit Expo NSE file generation mod', () => {
     );
   });
 
+  it('passes Expo iOS version metadata to the generated NSE Info.plist', async () => {
+    const tempIosRoot = makeTempIosRoot();
+    tempIosRoots.push(tempIosRoot);
+    const withDangerousMod = jest.fn((config, [, action]) =>
+      action({
+        ...config,
+        modRequest: {
+          platformProjectRoot: tempIosRoot,
+        },
+      }),
+    );
+    jest.doMock('expo/config-plugins', () => ({ withDangerousMod }), { virtual: true });
+
+    const { withNotifyKitIosNseFiles } = await import('../ios/withNotifyKitIosNseFiles');
+    withNotifyKitIosNseFiles(
+      {
+        version: '8.0.0',
+        ios: {
+          buildNumber: '800',
+        },
+      },
+      enabledOptions,
+    );
+    const plist = readFile(path.join(tempIosRoot, 'NotifyKitNSE', 'Info.plist'));
+
+    expect(plist).toContain(
+      '<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>',
+    );
+    expect(plist).toContain('<key>CFBundleVersion</key>\n\t<string>800</string>');
+  });
+
   it('uses the configured targetName in paths and plist content', async () => {
     const tempIosRoot = makeTempIosRoot();
     tempIosRoots.push(tempIosRoot);
@@ -130,6 +161,30 @@ describe('NotifyKit Expo NSE file generation mod', () => {
 
     expect(() => writeNotifyKitIosNseFiles(tempIosRoot, 'NotifyKitNSE')).not.toThrow();
     expect(readFile(notificationServicePath)).toBe(initialContents);
+  });
+
+  it('updates an existing generated Info.plist when version metadata changes', async () => {
+    const tempIosRoot = makeTempIosRoot();
+    tempIosRoots.push(tempIosRoot);
+    const { writeNotifyKitIosNseFiles } = await import('../ios/withNotifyKitIosNseFiles');
+
+    writeNotifyKitIosNseFiles(tempIosRoot, 'NotifyKitNSE', {
+      marketingVersion: '1.0.0',
+      currentProjectVersion: '100',
+    });
+
+    expect(() =>
+      writeNotifyKitIosNseFiles(tempIosRoot, 'NotifyKitNSE', {
+        marketingVersion: '8.0.0',
+        currentProjectVersion: '800',
+      }),
+    ).not.toThrow();
+
+    const plist = readFile(path.join(tempIosRoot, 'NotifyKitNSE', 'Info.plist'));
+    expect(plist).toContain(
+      '<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>',
+    );
+    expect(plist).toContain('<key>CFBundleVersion</key>\n\t<string>800</string>');
   });
 
   it('throws instead of overwriting an existing different file', async () => {

@@ -1,5 +1,10 @@
 import * as crypto from 'crypto';
 
+import {
+  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  DEFAULT_NSE_MARKETING_VERSION,
+} from './initNseCore';
+
 export interface XcodeProject {
   addTarget(
     name: string,
@@ -28,6 +33,8 @@ export interface NotifyKitNseXcodePatchOptions {
   bundleIdentifier: string;
   parentTargetName?: string;
   deploymentTarget?: string;
+  marketingVersion?: string;
+  currentProjectVersion?: string;
 }
 
 export interface NotifyKitNseXcodePatchResult {
@@ -42,11 +49,38 @@ export function patchXcodeProjectForNotifyKitNse(
   proj: XcodeProject,
   options: NotifyKitNseXcodePatchOptions,
 ): NotifyKitNseXcodePatchResult {
-  const { targetName, bundleIdentifier, parentTargetName, deploymentTarget = '15.1' } = options;
+  const {
+    targetName,
+    bundleIdentifier,
+    parentTargetName,
+    deploymentTarget = '15.1',
+    marketingVersion = DEFAULT_NSE_MARKETING_VERSION,
+    currentProjectVersion = DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  } = options;
   const warnings: string[] = [];
+  const existingTargetUuid = findTargetByName(proj, targetName);
 
-  if (targetExists(proj, targetName)) {
-    return { didChange: false, warnings };
+  if (existingTargetUuid) {
+    const didChange = setBuildSettings(
+      proj,
+      existingTargetUuid,
+      targetName,
+      bundleIdentifier,
+      deploymentTarget,
+      marketingVersion,
+      currentProjectVersion,
+    );
+
+    if (!didChange) {
+      return { didChange: false, warnings };
+    }
+
+    return {
+      didChange: true,
+      targetUuid: existingTargetUuid,
+      hostTargetUuid: findHostTarget(proj, parentTargetName) ?? undefined,
+      warnings,
+    };
   }
 
   const target = proj.addTarget(targetName, 'app_extension', targetName);
@@ -79,7 +113,15 @@ export function patchXcodeProjectForNotifyKitNse(
     stripRnfbInfoPlistInputPath(proj, hostUuid);
   }
 
-  setBuildSettings(proj, targetName, bundleIdentifier, deploymentTarget);
+  setBuildSettings(
+    proj,
+    targetUuid,
+    targetName,
+    bundleIdentifier,
+    deploymentTarget,
+    marketingVersion,
+    currentProjectVersion,
+  );
 
   return {
     didChange: true,
@@ -120,10 +162,6 @@ function findTargetByName(proj: XcodeProject, name: string): string | null {
   return null;
 }
 
-function targetExists(proj: XcodeProject, name: string): boolean {
-  return findTargetByName(proj, name) !== null;
-}
-
 function getTargetProductUuid(target: {
   uuid: string;
   pbxNativeTarget?: Record<string, unknown>;
@@ -134,28 +172,108 @@ function getTargetProductUuid(target: {
 
 function setBuildSettings(
   proj: XcodeProject,
+  targetUuid: string,
   targetName: string,
   bundleId: string,
   deploymentTarget: string,
-): void {
-  const configs = proj.pbxXCBuildConfigurationSection();
+  marketingVersion: string,
+  currentProjectVersion: string,
+): boolean {
+  let didChange = false;
 
-  for (const [, value] of Object.entries(configs)) {
-    if (typeof value !== 'object') continue;
-    const config = value as Record<string, unknown>;
-    const settings = config.buildSettings as Record<string, string> | undefined;
-
-    if (!settings) continue;
-    if (settings.PRODUCT_NAME !== `"${targetName}"`) continue;
-
-    settings.INFOPLIST_FILE = `"${targetName}/Info.plist"`;
-    settings.PRODUCT_BUNDLE_IDENTIFIER = `"${bundleId}"`;
-    settings.TARGETED_DEVICE_FAMILY = `"1,2"`;
-    settings.IPHONEOS_DEPLOYMENT_TARGET = deploymentTarget;
-    settings.SWIFT_VERSION = '5.0';
-    settings.CODE_SIGN_ENTITLEMENTS = `"${targetName}/${targetName}.entitlements"`;
-    settings.GENERATE_INFOPLIST_FILE = 'NO';
+  for (const settings of getTargetBuildSettings(proj, targetUuid, targetName)) {
+    didChange =
+      setBuildSetting(settings, 'INFOPLIST_FILE', `"${targetName}/Info.plist"`) || didChange;
+    didChange =
+      setBuildSetting(settings, 'PRODUCT_BUNDLE_IDENTIFIER', `"${bundleId}"`) || didChange;
+    didChange = setBuildSetting(settings, 'TARGETED_DEVICE_FAMILY', `"1,2"`) || didChange;
+    didChange =
+      setBuildSetting(settings, 'IPHONEOS_DEPLOYMENT_TARGET', deploymentTarget) || didChange;
+    didChange = setBuildSetting(settings, 'MARKETING_VERSION', marketingVersion) || didChange;
+    didChange =
+      setBuildSetting(settings, 'CURRENT_PROJECT_VERSION', currentProjectVersion) || didChange;
+    didChange = setBuildSetting(settings, 'SWIFT_VERSION', '5.0') || didChange;
+    didChange =
+      setBuildSetting(
+        settings,
+        'CODE_SIGN_ENTITLEMENTS',
+        `"${targetName}/${targetName}.entitlements"`,
+      ) || didChange;
+    didChange = setBuildSetting(settings, 'GENERATE_INFOPLIST_FILE', 'NO') || didChange;
   }
+
+  return didChange;
+}
+
+function getTargetBuildSettings(
+  proj: XcodeProject,
+  targetUuid: string,
+  targetName: string,
+): Array<Record<string, string>> {
+  const target = proj.pbxNativeTargetSection()[targetUuid] as Record<string, unknown> | undefined;
+  const buildConfigurationListUuid = target?.buildConfigurationList;
+  const configs = proj.pbxXCBuildConfigurationSection();
+  const settingsByConfigurationList = getBuildSettingsFromConfigurationList(
+    proj,
+    typeof buildConfigurationListUuid === 'string' ? buildConfigurationListUuid : undefined,
+    configs,
+  );
+
+  if (settingsByConfigurationList.length > 0) {
+    return settingsByConfigurationList;
+  }
+
+  return Object.entries(configs)
+    .filter(([, value]) => typeof value === 'object' && value !== null)
+    .map(([, value]) => value as Record<string, unknown>)
+    .filter(config => {
+      const settings = config.buildSettings as Record<string, string> | undefined;
+      return settings?.PRODUCT_NAME === `"${targetName}"`;
+    })
+    .map(config => config.buildSettings as Record<string, string>);
+}
+
+function getBuildSettingsFromConfigurationList(
+  proj: XcodeProject,
+  buildConfigurationListUuid: string | undefined,
+  configs: Record<string, unknown>,
+): Array<Record<string, string>> {
+  if (!buildConfigurationListUuid) {
+    return [];
+  }
+
+  const configurationLists = (proj as any).hash.project.objects.XCConfigurationList as
+    | Record<string, unknown>
+    | undefined;
+  const configurationList = configurationLists?.[buildConfigurationListUuid] as
+    | Record<string, unknown>
+    | undefined;
+  const buildConfigurations = Array.isArray(configurationList?.buildConfigurations)
+    ? configurationList.buildConfigurations
+    : [];
+
+  return buildConfigurations
+    .map(ref => (ref as Record<string, unknown>)?.value)
+    .filter((uuid): uuid is string => typeof uuid === 'string')
+    .map(uuid => configs[uuid])
+    .filter(
+      (config): config is Record<string, unknown> => typeof config === 'object' && config !== null,
+    )
+    .map(config => {
+      if (typeof config.buildSettings !== 'object' || config.buildSettings === null) {
+        config.buildSettings = {};
+      }
+      return config.buildSettings as Record<string, string>;
+    });
+}
+
+function setBuildSetting(settings: Record<string, string>, key: string, value: string): boolean {
+  if (settings[key] === value) {
+    return false;
+  }
+
+  settings[key] = value;
+  return true;
 }
 
 function fixProductFileReference(proj: XcodeProject, targetName: string): void {

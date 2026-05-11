@@ -25,19 +25,34 @@ export function patchPodfileForNotifyKitNse(
   const placement = options.placement ?? 'nested';
   const useFrameworks = options.useFrameworks ?? false;
 
-  if (!hasUncommentedTarget(patched, options.targetName)) {
-    const withNseTarget = insertNseTarget(
+  const existingNseTarget = findUncommentedTargetBlock(patched, options.targetName);
+
+  if (!existingNseTarget) {
+    if (!hasUncommentedTarget(patched, options.targetName)) {
+      const withNseTarget = insertNseTarget(
+        patched,
+        options.targetName,
+        packagePathFromIos,
+        placement,
+        useFrameworks,
+      );
+      if (withNseTarget === null) {
+        return { contents: patched, didChange: changed };
+      }
+      patched = withNseTarget;
+      changed = true;
+    }
+  } else if (placement === 'topLevel') {
+    const withUpdatedNseTarget = updateTopLevelNseTargetBlock(
       patched,
-      options.targetName,
+      existingNseTarget,
       packagePathFromIos,
-      placement,
       useFrameworks,
     );
-    if (withNseTarget === null) {
-      return { contents: patched, didChange: changed };
+    if (withUpdatedNseTarget !== patched) {
+      patched = withUpdatedNseTarget;
+      changed = true;
     }
-    patched = withNseTarget;
-    changed = true;
   }
 
   const withRnfbPatch = ensureRnfbPostInstallPatch(patched);
@@ -90,7 +105,7 @@ function buildNseTargetBlock(
   useFrameworks: false | true | 'static' | 'dynamic',
 ): string {
   if (placement === 'topLevel') {
-    const useFrameworksLine = buildUseFrameworksLine(useFrameworks);
+    const useFrameworksLine = buildUseFrameworksLine(useFrameworks, '  ');
 
     return (
       `target '${targetName}' do\n` +
@@ -108,17 +123,65 @@ function buildNseTargetBlock(
   );
 }
 
-function buildUseFrameworksLine(useFrameworks: false | true | 'static' | 'dynamic'): string {
+function updateTopLevelNseTargetBlock(
+  content: string,
+  targetBlock: RubyTargetBlock,
+  packagePathFromIos: string,
+  useFrameworks: false | true | 'static' | 'dynamic',
+): string {
+  const originalBlock = content.slice(targetBlock.startIndex, targetBlock.endIndex);
+  const hasTrailingNewline = originalBlock.endsWith('\n');
+  const blockWithoutTrailingNewline = hasTrailingNewline
+    ? originalBlock.slice(0, -1)
+    : originalBlock;
+  const lines = blockWithoutTrailingNewline.split('\n');
+
+  if (lines.length < 2) {
+    return content;
+  }
+
+  const targetLine = lines[0];
+  const endLine = lines[lines.length - 1];
+  const targetIndent = targetLine.match(/^[ \t]*/)?.[0] ?? '';
+  const bodyIndent = `${targetIndent}  `;
+  const generatedLines = [
+    ...buildUseFrameworksLine(useFrameworks, bodyIndent).trimEnd().split('\n').filter(Boolean),
+    `${bodyIndent}pod 'RNNotifeeCore', :path => '${packagePathFromIos}'`,
+  ];
+  const preservedBodyLines = lines
+    .slice(1, -1)
+    .filter(line => !isUncommentedUseFrameworksLine(line))
+    .filter(line => !isUncommentedRnNotifeeCorePodLine(line))
+    .filter(line => !isUncommentedSearchPathInheritanceLine(line));
+  const updatedBlock =
+    [targetLine, ...generatedLines, ...preservedBodyLines, endLine].join('\n') +
+    (hasTrailingNewline ? '\n' : '');
+
+  if (updatedBlock === originalBlock) {
+    return content;
+  }
+
+  return (
+    content.slice(0, targetBlock.startIndex) +
+    updatedBlock +
+    content.slice(targetBlock.endIndex)
+  );
+}
+
+function buildUseFrameworksLine(
+  useFrameworks: false | true | 'static' | 'dynamic',
+  indent: string,
+): string {
   if (useFrameworks === 'static') {
-    return `  use_frameworks! :linkage => :static\n`;
+    return `${indent}use_frameworks! :linkage => :static\n`;
   }
 
   if (useFrameworks === 'dynamic') {
-    return `  use_frameworks! :linkage => :dynamic\n`;
+    return `${indent}use_frameworks! :linkage => :dynamic\n`;
   }
 
   if (useFrameworks === true) {
-    return `  use_frameworks!\n`;
+    return `${indent}use_frameworks!\n`;
   }
 
   return '';
@@ -265,6 +328,50 @@ function countRubyBlockOpeners(line: string): number {
 
 function stripRubyLineComment(line: string): string {
   return line.replace(/#.*$/, '');
+}
+
+interface RubyTargetBlock {
+  startIndex: number;
+  endIndex: number;
+}
+
+function findUncommentedTargetBlock(content: string, targetName: string): RubyTargetBlock | null {
+  const pattern = new RegExp(
+    `^[ \\t]*target\\s+['"]${escapeRegex(targetName)}['"]\\s+do\\b.*$`,
+    'gm',
+  );
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(content)) !== null) {
+    const line = match[0];
+    if (stripRubyLineComment(line).trim().length === 0) {
+      continue;
+    }
+
+    const endLineStart = findMatchingRubyBlockEnd(content, match.index);
+    if (endLineStart === -1) {
+      return null;
+    }
+
+    return {
+      startIndex: match.index,
+      endIndex: findLineEnd(content, endLineStart),
+    };
+  }
+
+  return null;
+}
+
+function isUncommentedUseFrameworksLine(line: string): boolean {
+  return /^use_frameworks!(?:\s|$)/.test(stripRubyLineComment(line).trim());
+}
+
+function isUncommentedRnNotifeeCorePodLine(line: string): boolean {
+  return /^pod\s+['"]RNNotifeeCore['"](?:\s|,|$)/.test(stripRubyLineComment(line).trim());
+}
+
+function isUncommentedSearchPathInheritanceLine(line: string): boolean {
+  return /^inherit!\s+:search_paths\b/.test(stripRubyLineComment(line).trim());
 }
 
 function hasUncommentedTarget(content: string, targetName: string): boolean {

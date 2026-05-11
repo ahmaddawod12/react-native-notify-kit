@@ -44,6 +44,7 @@ const XCODE_BUILD_SETTING_KEYS = [
   'CODE_SIGN_ENTITLEMENTS',
   'GENERATE_INFOPLIST_FILE',
 ];
+const XCODE_VERSION_BUILD_SETTING_KEYS = ['MARKETING_VERSION', 'CURRENT_PROJECT_VERSION'];
 
 function countOccurrences(content: string, needle: string): number {
   return content.split(needle).length - 1;
@@ -99,6 +100,28 @@ function getBuildSettingsByConfiguration(
       const settings = config.buildSettings as Record<string, string>;
       const selected: Record<string, string | undefined> = {};
       for (const key of XCODE_BUILD_SETTING_KEYS) {
+        selected[key] = settings[key]?.replace(/"/g, '');
+      }
+      return selected;
+    })
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
+function getVersionBuildSettingsByConfiguration(
+  proj: ReturnType<typeof xcode.project>,
+  targetProductName: string,
+): Array<Record<string, string | undefined>> {
+  return Object.entries(proj.pbxXCBuildConfigurationSection())
+    .filter(([, value]) => typeof value === 'object')
+    .map(([, value]) => value as Record<string, unknown>)
+    .filter(config => {
+      const settings = config.buildSettings as Record<string, string> | undefined;
+      return settings?.PRODUCT_NAME === `"${targetProductName}"`;
+    })
+    .map(config => {
+      const settings = config.buildSettings as Record<string, string>;
+      const selected: Record<string, string | undefined> = {};
+      for (const key of XCODE_VERSION_BUILD_SETTING_KEYS) {
         selected[key] = settings[key]?.replace(/"/g, '');
       }
       return selected;
@@ -222,6 +245,24 @@ describe('plugin shared NSE core helpers', () => {
         cliCore.deriveNseBundleIdentifier(parentBundleId, suffix, parentTargetName),
       );
     }
+  });
+
+  it('renders NSE plist version values from options with stable defaults', () => {
+    const customPlist = pluginCore.renderNseInfoPlist({
+      targetName: 'CustomNSE',
+      marketingVersion: '8.0.0',
+      currentProjectVersion: '800',
+    });
+    const defaultPlist = pluginCore.renderNseInfoPlist({ targetName: 'CustomNSE' });
+
+    expect(customPlist).toContain(
+      '<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>',
+    );
+    expect(customPlist).toContain('<key>CFBundleVersion</key>\n\t<string>800</string>');
+    expect(defaultPlist).toContain(
+      '<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>',
+    );
+    expect(defaultPlist).toContain('<key>CFBundleVersion</key>\n\t<string>1</string>');
   });
 
   it('keeps the committed CJS build helper loadable through an internal path', async () => {
@@ -381,6 +422,43 @@ describe('plugin shared NSE Podfile patcher', () => {
 });
 
 describe('plugin shared NSE Xcode patcher', () => {
+  it('sets NSE Xcode marketing and current project version build settings', () => {
+    const defaultProj = parseFixtureProject();
+    const customProj = parseFixtureProject();
+
+    patchPluginXcodeProjectForNotifyKitNse(defaultProj, {
+      targetName: 'NotifyKitNSE',
+      bundleIdentifier: 'com.test.nse',
+    });
+    patchPluginXcodeProjectForNotifyKitNse(customProj, {
+      targetName: 'NotifyKitNSE',
+      bundleIdentifier: 'com.test.nse',
+      marketingVersion: '8.0.0',
+      currentProjectVersion: '800',
+    });
+
+    expect(getVersionBuildSettingsByConfiguration(defaultProj, 'NotifyKitNSE')).toEqual([
+      {
+        CURRENT_PROJECT_VERSION: '1',
+        MARKETING_VERSION: '1.0',
+      },
+      {
+        CURRENT_PROJECT_VERSION: '1',
+        MARKETING_VERSION: '1.0',
+      },
+    ]);
+    expect(getVersionBuildSettingsByConfiguration(customProj, 'NotifyKitNSE')).toEqual([
+      {
+        CURRENT_PROJECT_VERSION: '800',
+        MARKETING_VERSION: '8.0.0',
+      },
+      {
+        CURRENT_PROJECT_VERSION: '800',
+        MARKETING_VERSION: '8.0.0',
+      },
+    ]);
+  });
+
   it('keeps structural Xcode invariants equivalent to the CLI patcher', () => {
     const pluginProj = parseFixtureProject();
     const cliProj = parseFixtureProject();

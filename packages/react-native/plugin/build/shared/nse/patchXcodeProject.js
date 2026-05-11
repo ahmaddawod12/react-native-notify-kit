@@ -1,13 +1,44 @@
 'use strict';
 
 const crypto = require('crypto');
+const {
+  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  DEFAULT_NSE_MARKETING_VERSION,
+} = require('./initNseCore');
 
 function patchXcodeProjectForNotifyKitNse(proj, options) {
-  const { targetName, bundleIdentifier, parentTargetName, deploymentTarget = '15.1' } = options;
+  const {
+    targetName,
+    bundleIdentifier,
+    parentTargetName,
+    deploymentTarget = '15.1',
+    marketingVersion = DEFAULT_NSE_MARKETING_VERSION,
+    currentProjectVersion = DEFAULT_NSE_CURRENT_PROJECT_VERSION,
+  } = options;
   const warnings = [];
+  const existingTargetUuid = findTargetByName(proj, targetName);
 
-  if (targetExists(proj, targetName)) {
-    return { didChange: false, warnings };
+  if (existingTargetUuid) {
+    const didChange = setBuildSettings(
+      proj,
+      existingTargetUuid,
+      targetName,
+      bundleIdentifier,
+      deploymentTarget,
+      marketingVersion,
+      currentProjectVersion,
+    );
+
+    if (!didChange) {
+      return { didChange: false, warnings };
+    }
+
+    return {
+      didChange: true,
+      targetUuid: existingTargetUuid,
+      hostTargetUuid: findHostTarget(proj, parentTargetName) ?? undefined,
+      warnings,
+    };
   }
 
   const target = proj.addTarget(targetName, 'app_extension', targetName);
@@ -40,7 +71,15 @@ function patchXcodeProjectForNotifyKitNse(proj, options) {
     stripRnfbInfoPlistInputPath(proj, hostUuid);
   }
 
-  setBuildSettings(proj, targetName, bundleIdentifier, deploymentTarget);
+  setBuildSettings(
+    proj,
+    targetUuid,
+    targetName,
+    bundleIdentifier,
+    deploymentTarget,
+    marketingVersion,
+    currentProjectVersion,
+  );
 
   return {
     didChange: true,
@@ -81,34 +120,101 @@ function findTargetByName(proj, name) {
   return null;
 }
 
-function targetExists(proj, name) {
-  return findTargetByName(proj, name) !== null;
-}
-
 function getTargetProductUuid(target) {
   const productReference = target.pbxNativeTarget && target.pbxNativeTarget.productReference;
   return typeof productReference === 'string' ? productReference : undefined;
 }
 
-function setBuildSettings(proj, targetName, bundleId, deploymentTarget) {
-  const configs = proj.pbxXCBuildConfigurationSection();
+function setBuildSettings(
+  proj,
+  targetUuid,
+  targetName,
+  bundleId,
+  deploymentTarget,
+  marketingVersion,
+  currentProjectVersion,
+) {
+  let didChange = false;
 
-  for (const [, value] of Object.entries(configs)) {
-    if (typeof value !== 'object') continue;
-    const config = value;
-    const settings = config.buildSettings;
-
-    if (!settings) continue;
-    if (settings.PRODUCT_NAME !== `"${targetName}"`) continue;
-
-    settings.INFOPLIST_FILE = `"${targetName}/Info.plist"`;
-    settings.PRODUCT_BUNDLE_IDENTIFIER = `"${bundleId}"`;
-    settings.TARGETED_DEVICE_FAMILY = `"1,2"`;
-    settings.IPHONEOS_DEPLOYMENT_TARGET = deploymentTarget;
-    settings.SWIFT_VERSION = '5.0';
-    settings.CODE_SIGN_ENTITLEMENTS = `"${targetName}/${targetName}.entitlements"`;
-    settings.GENERATE_INFOPLIST_FILE = 'NO';
+  for (const settings of getTargetBuildSettings(proj, targetUuid, targetName)) {
+    didChange =
+      setBuildSetting(settings, 'INFOPLIST_FILE', `"${targetName}/Info.plist"`) || didChange;
+    didChange =
+      setBuildSetting(settings, 'PRODUCT_BUNDLE_IDENTIFIER', `"${bundleId}"`) || didChange;
+    didChange = setBuildSetting(settings, 'TARGETED_DEVICE_FAMILY', `"1,2"`) || didChange;
+    didChange =
+      setBuildSetting(settings, 'IPHONEOS_DEPLOYMENT_TARGET', deploymentTarget) || didChange;
+    didChange = setBuildSetting(settings, 'MARKETING_VERSION', marketingVersion) || didChange;
+    didChange =
+      setBuildSetting(settings, 'CURRENT_PROJECT_VERSION', currentProjectVersion) || didChange;
+    didChange = setBuildSetting(settings, 'SWIFT_VERSION', '5.0') || didChange;
+    didChange =
+      setBuildSetting(
+        settings,
+        'CODE_SIGN_ENTITLEMENTS',
+        `"${targetName}/${targetName}.entitlements"`,
+      ) || didChange;
+    didChange = setBuildSetting(settings, 'GENERATE_INFOPLIST_FILE', 'NO') || didChange;
   }
+
+  return didChange;
+}
+
+function getTargetBuildSettings(proj, targetUuid, targetName) {
+  const target = proj.pbxNativeTargetSection()[targetUuid];
+  const buildConfigurationListUuid = target && target.buildConfigurationList;
+  const configs = proj.pbxXCBuildConfigurationSection();
+  const settingsByConfigurationList = getBuildSettingsFromConfigurationList(
+    proj,
+    typeof buildConfigurationListUuid === 'string' ? buildConfigurationListUuid : undefined,
+    configs,
+  );
+
+  if (settingsByConfigurationList.length > 0) {
+    return settingsByConfigurationList;
+  }
+
+  return Object.entries(configs)
+    .filter(([, value]) => typeof value === 'object' && value !== null)
+    .map(([, value]) => value)
+    .filter(config => {
+      const settings = config.buildSettings;
+      return settings?.PRODUCT_NAME === `"${targetName}"`;
+    })
+    .map(config => config.buildSettings);
+}
+
+function getBuildSettingsFromConfigurationList(proj, buildConfigurationListUuid, configs) {
+  if (!buildConfigurationListUuid) {
+    return [];
+  }
+
+  const configurationLists = proj.hash.project.objects.XCConfigurationList;
+  const configurationList = configurationLists && configurationLists[buildConfigurationListUuid];
+  const buildConfigurations = Array.isArray(configurationList?.buildConfigurations)
+    ? configurationList.buildConfigurations
+    : [];
+
+  return buildConfigurations
+    .map(ref => ref?.value)
+    .filter(uuid => typeof uuid === 'string')
+    .map(uuid => configs[uuid])
+    .filter(config => typeof config === 'object' && config !== null)
+    .map(config => {
+      if (typeof config.buildSettings !== 'object' || config.buildSettings === null) {
+        config.buildSettings = {};
+      }
+      return config.buildSettings;
+    });
+}
+
+function setBuildSetting(settings, key, value) {
+  if (settings[key] === value) {
+    return false;
+  }
+
+  settings[key] = value;
+  return true;
 }
 
 function fixProductFileReference(proj, targetName) {
