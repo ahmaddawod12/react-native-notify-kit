@@ -162,9 +162,7 @@ function updateTopLevelNseTargetBlock(
   }
 
   return (
-    content.slice(0, targetBlock.startIndex) +
-    updatedBlock +
-    content.slice(targetBlock.endIndex)
+    content.slice(0, targetBlock.startIndex) + updatedBlock + content.slice(targetBlock.endIndex)
   );
 }
 

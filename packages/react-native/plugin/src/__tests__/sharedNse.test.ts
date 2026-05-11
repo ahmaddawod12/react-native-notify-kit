@@ -259,9 +259,7 @@ describe('plugin shared NSE core helpers', () => {
       '<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>',
     );
     expect(customPlist).toContain('<key>CFBundleVersion</key>\n\t<string>800</string>');
-    expect(defaultPlist).toContain(
-      '<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>',
-    );
+    expect(defaultPlist).toContain('<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>');
     expect(defaultPlist).toContain('<key>CFBundleVersion</key>\n\t<string>1</string>');
   });
 

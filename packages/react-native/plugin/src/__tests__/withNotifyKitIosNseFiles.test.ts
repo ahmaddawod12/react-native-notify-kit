@@ -108,9 +108,7 @@ describe('NotifyKit Expo NSE file generation mod', () => {
     );
     const plist = readFile(path.join(tempIosRoot, 'NotifyKitNSE', 'Info.plist'));
 
-    expect(plist).toContain(
-      '<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>',
-    );
+    expect(plist).toContain('<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>');
     expect(plist).toContain('<key>CFBundleVersion</key>\n\t<string>800</string>');
   });
 
@@ -181,9 +179,7 @@ describe('NotifyKit Expo NSE file generation mod', () => {
     ).not.toThrow();
 
     const plist = readFile(path.join(tempIosRoot, 'NotifyKitNSE', 'Info.plist'));
-    expect(plist).toContain(
-      '<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>',
-    );
+    expect(plist).toContain('<key>CFBundleShortVersionString</key>\n\t<string>8.0.0</string>');
     expect(plist).toContain('<key>CFBundleVersion</key>\n\t<string>800</string>');
   });
 

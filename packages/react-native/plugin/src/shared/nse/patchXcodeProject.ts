@@ -1,9 +1,6 @@
 import * as crypto from 'crypto';
 
-import {
-  DEFAULT_NSE_CURRENT_PROJECT_VERSION,
-  DEFAULT_NSE_MARKETING_VERSION,
-} from './initNseCore';
+import { DEFAULT_NSE_CURRENT_PROJECT_VERSION, DEFAULT_NSE_MARKETING_VERSION } from './initNseCore';
 
 export interface XcodeProject {
   addTarget(
