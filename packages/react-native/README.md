@@ -433,7 +433,8 @@ This fork is a complete migration to React Native's **New Architecture**:
 - **Android bridge rewritten in Kotlin** (original was Java)
 - **iOS bridge uses Objective-C++** with `NativeNotifeeModuleSpecJSI` TurboModule conformance
 - **Minimum React Native >=0.73**, development target **0.85.3**
-- **Toolchain**: Yarn 4, Node 22+, Java 17, library Android module compileSdk/targetSdk 35
+- **Toolchain**: Yarn 4, Node 22+, JDK 17+ for Android builds, library Android module compileSdk/targetSdk 35
+- **Android JDK baseline**: JDK 17 and JDK 21 are the validated Android build baselines; newer JDKs are not blocked by NotifyKit but depend on the consumer Android toolchain
 - **Single Android module** — the original Notifee shipped a pre-compiled AAR bundled inside the npm tarball under a frozen Maven coordinate; this fork compiles the core from source as part of the React Native bridge module on every consumer build. Eliminates the `FAIL_ON_PROJECT_REPOS` issue on RN 0.74+ and the Gradle cache staleness bug that could serve outdated bytecode after `yarn upgrade`.
 - **Expo CNG development builds** — iOS FCM Mode NSE automation and Android foreground service manifest configuration are available through the config plugin. Android Expo FCM smoke validation uses RNFirebase data-only messages plus `notifee.handleFcmMessage`.
 - **Core notification logic (NotifeeCore) is unchanged** — the public API is fully compatible with the original Notifee
