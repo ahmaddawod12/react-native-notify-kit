@@ -50,7 +50,7 @@ These match the versions the library is built with (see [packages/react-native/a
 
 ### 2c. Java version
 
-The library is compiled with Java 17 (`sourceCompatibility = VERSION_17`, `targetCompatibility = VERSION_17`). JDK 17 (LTS) or 21 (LTS) is required to build on Android. JDK 8 and 11 are **not** supported.
+The library is compiled with Java 17 (`sourceCompatibility = VERSION_17`, `targetCompatibility = VERSION_17`). Android builds require JDK 17 or newer. JDK 17 and JDK 21 are the validated baselines. Newer JDK versions are not blocked by NotifyKit, but compatibility depends on the consumer Android toolchain: Gradle, Android Gradle Plugin, Kotlin, React Native, and Expo/EAS build images where applicable. JDK 8 and 11 are **not** supported.
 
 ### 2d. React Native and New Architecture
 
@@ -121,7 +121,7 @@ Then in your `app.json` / `app.config.js`, keep values at or above the library b
 
 Run `npx expo prebuild` and rebuild your app as described in the ["Adding custom native code"](https://docs.expo.dev/workflow/customizing/) guide.
 
-For EAS Build, use an image that ships JDK 17. In `eas.json`:
+For EAS Build, use an image that ships a supported JDK, preferably one of the validated baselines (JDK 17 or JDK 21). In `eas.json`:
 
 ```json
 {
