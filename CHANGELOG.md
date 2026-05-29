@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [10.4.4] - 2026-05-29
+
 ### Fixed
 
 - **Android**: relaxed the Java runtime guard so JDK versions newer than the validated baselines are no longer blocked before the consumer Gradle/AGP/Kotlin/React Native toolchain can evaluate compatibility. JDK 17 remains the minimum requirement, and JDK 17 and JDK 21 are the validated Android build baselines.
