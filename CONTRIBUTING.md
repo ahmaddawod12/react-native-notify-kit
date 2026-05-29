@@ -2,6 +2,10 @@
 
 Welcome! This is a community-maintained fork of [Notifee](https://github.com/invertase/notifee), officially recommended by Invertase as the drop-in replacement for `@notifee/react-native`. Contributions are welcome — but this is a single-maintainer project with no SLA, so please be patient with reviews.
 
+## Code of Conduct
+
+By participating in this project, you are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Before you contribute
 
 - **Bugs** — open an issue using the [Bug Report template](https://github.com/marcocrupi/react-native-notify-kit/issues/new?template=bug_report.yml) first. Do not send PRs for bugs that haven't been triaged.
