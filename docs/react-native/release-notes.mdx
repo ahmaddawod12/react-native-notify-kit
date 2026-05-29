@@ -5,6 +5,43 @@ description: react-native-notify-kit API releases
 
 ## Unreleased (next release)
 
+This unreleased maintenance entry records Android Java guard, documentation, repository tooling, and test harness updates already validated on the maintenance branch. It does not change the public JavaScript API or notification runtime behavior.
+
+### Android Java Guard
+
+- JDK 17 remains the minimum requirement for Android builds.
+- JDK 17 and JDK 21 are the validated Android build baselines.
+- JDK versions newer than the validated baselines are no longer blocked by NotifyKit before the consumer Gradle, Android Gradle Plugin, Kotlin, and React Native toolchain can evaluate compatibility.
+- For Expo/EAS projects, newer JDK compatibility also depends on the consumer Expo/EAS Android toolchain.
+
+### JDK Documentation
+
+- Clarified the Android JDK policy across installation, environment support, README, and package README documentation.
+- Documented that Android builds require JDK 17 or newer, that JDK 17 and JDK 21 are the validated baselines, and that newer JDKs remain toolchain-dependent.
+- Documented that JDK 8 and JDK 11 are not supported.
+
+### Repository Tooling Advisory Fixes
+
+- Resolved the repository lockfile alert for xcode's transitive uuid dependency with a targeted Yarn resolution for `xcode/uuid` to `uuid` 11.1.1.
+- `xcode` remains at 3.0.1. The uuid advisory was not runtime-reachable through NotifyKit notification behavior in this repository usage, and this root lockfile fix does not automatically protect all npm consumers.
+- Updated the Expo smoke fixture from `expo` ~55.0.23 to ~55.0.26 so its Expo Metro chain resolves `postcss` to patched 8.5.x. This fixture tooling fix does not add a PostCSS resolution and does not enter the published `react-native-notify-kit` npm package.
+- Updated the `ws` lockfile resolution used through `@expo/cli` from 8.20.0 to 8.20.1, within the existing `^8.12.1` range. This did not change `package.json`, Expo SDK, React Native, Metro, or add a `ws` resolution.
+- The PostCSS and ws alerts were through Expo smoke fixture tooling, not NotifyKit runtime notification issues.
+
+### Tests And Harnesses
+
+- Moved the xcode-backed Expo config plugin tests to Jest's node environment so `xcode` resolves `uuid` through the Node/CommonJS export path under the React Native Jest preset.
+- Made `scripts/test-ios-nse-helper.sh` executable; the script content is unchanged.
+
+### Validation
+
+- Passed `yarn validate:all`, `yarn verify:ios-core`, `yarn smoke:expo:config`, `yarn tests_rn:test`, `yarn tests_rn:test-server`, `cd packages/cli && yarn test`, the iOS delegate/local attachment/NSE helper harnesses, `yarn test:core:android`, and `yarn e2e:cli-tarball`.
+- Passed dependency/tooling checks for the advisory follow-ups: `yarn why postcss`, `yarn install --immutable`, `yarn why ws`, `yarn smoke:expo:config`, and `yarn validate:all`.
+
+### Validation Limits
+
+- Expo prebuild, Android runtime smoke, real iOS builds, device smoke, NSE runtime, FCM/Firebase, EAS, release, publish, and tag workflows were not validated as part of this maintenance entry.
+
 ## [10.4.3] (2026-05-18)
 
 This 10.4.3 maintenance update realigns the library development target and bare React Native smoke app with React Native 0.85.3. It keeps the minimum supported React Native version at >=0.73.0 and remains New Architecture only.

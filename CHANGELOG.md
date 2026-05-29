@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android**: relaxed the Java runtime guard so JDK versions newer than the validated baselines are no longer blocked before the consumer Gradle/AGP/Kotlin/React Native toolchain can evaluate compatibility. JDK 17 remains the minimum requirement, and JDK 17 and JDK 21 are the validated Android build baselines.
+
+### Docs
+
+- **Docs**: clarified the Android JDK policy across installation, environment support, and README documentation. JDK 17+ is required, JDK 17 and JDK 21 are the validated baselines, and newer JDKs remain toolchain-dependent.
+
+### Tooling
+
+- **Tooling**: resolved the repository lockfile alert for xcode's transitive uuid dependency by pinning xcode/uuid to uuid 11.1.1 with a targeted Yarn resolution. This is a repository tooling/compliance fix and does not change notification runtime behavior.
+- **Expo smoke app / Tooling**: updated the Expo smoke fixture from expo ~55.0.23 to ~55.0.26 so its Expo Metro chain resolves postcss to a patched 8.5.x version. This addresses the repository lockfile alert without adding a PostCSS resolution.
+- **Expo smoke app / Tooling**: updated the ws lockfile resolution used through @expo/cli from 8.20.0 to 8.20.1. This addresses the repository lockfile alert without changing Expo, React Native, Metro, or adding a ws resolution.
+
+### Tests
+
+- **Tests**: moved the xcode-backed Expo config plugin tests to Jest's node environment so xcode resolves uuid through the Node/CommonJS export path under the React Native Jest preset.
+- **Tests**: made the iOS NSE helper harness executable so it can be run directly as scripts/test-ios-nse-helper.sh.
+- **Validation**: passed static validation, React Native/server/CLI Jest suites, iOS ObjC helper harnesses, Android core unit tests, Expo config, and CLI tarball E2E validation.
+
 ## [10.4.3] - 2026-05-18
 
 ### Changed
