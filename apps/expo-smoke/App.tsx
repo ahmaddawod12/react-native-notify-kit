@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
 import {
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -18,6 +19,7 @@ import {
   isFcmSmokeRuntimePlatform,
   prepareNotifyKitFcm,
 } from './fcmSmoke';
+import { executeRebootSmokeDeepLink, extractRebootSmokeDeepLink } from './rebootSmokeHarness';
 
 const MAX_LOG_ENTRIES = 80;
 
@@ -78,6 +80,17 @@ const getErrorMessage = (error: unknown): string => {
   }
 
   return formatValue(error);
+};
+
+const emitRebootSmokeDeepLinkError = (action: string, error: unknown): void => {
+  console.log(
+    `REBOOT-SMOKE:ERROR ${JSON.stringify({
+      loggedAt: Date.now(),
+      status: 'FAIL',
+      action,
+      reason: getErrorMessage(error),
+    })}`,
+  );
 };
 
 const getEventTypeName = (eventType: EventType): string =>
@@ -303,6 +316,44 @@ export default function App(): React.JSX.Element {
 
     return unsubscribe;
   }, [addLog, logError]);
+
+  useEffect(() => {
+    const handleUrl = (url: string) => {
+      const request = extractRebootSmokeDeepLink(url);
+      if (request == null) {
+        return;
+      }
+
+      addLog('Reboot smoke deep link', {
+        value: {
+          action: request.action,
+          path: request.path,
+        },
+      });
+
+      executeRebootSmokeDeepLink(request).catch((error: unknown) => {
+        emitRebootSmokeDeepLinkError('deep-link', error);
+      });
+    };
+
+    void Linking.getInitialURL()
+      .then(url => {
+        if (url) {
+          handleUrl(url);
+        }
+      })
+      .catch((error: unknown) => {
+        emitRebootSmokeDeepLinkError('initial-url', error);
+      });
+
+    const subscription = Linking.addEventListener('url', event => {
+      handleUrl(event.url);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [addLog]);
 
   useEffect(() => {
     const canCheckInitialNotification = Platform.OS === 'android' || Platform.OS === 'ios';

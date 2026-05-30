@@ -106,7 +106,7 @@ module.exports = ({ config }) => ({
   slug: 'notify-kit-expo-smoke',
   version: '1.0.0',
   orientation: 'portrait',
-  scheme: 'notifykitexposmoke',
+  scheme: ['notifykitexposmoke', 'notifykit'],
   ios: {
     ...config.ios,
     bundleIdentifier: 'com.notifykit.exposmoke',
