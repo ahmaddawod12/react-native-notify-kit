@@ -8,6 +8,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import androidx.core.app.RemoteInput;
 import app.notifee.core.event.InitialNotificationEvent;
 import app.notifee.core.event.MainComponentEvent;
 import app.notifee.core.event.NotificationEvent;
@@ -70,6 +71,38 @@ public class ReceiverServiceInitialNotificationTest {
     assertNull(
         "pre-Android 12 ReceiverService currently does not post InitialNotificationEvent for"
             + " no-launch ACTION_PRESS",
+        EventBus.getStickyEvent(InitialNotificationEvent.class));
+  }
+
+  @Test
+  public void onActionPressIntent_withoutLaunch_preservesRemoteInputInNotificationEvent() {
+    Intent intent =
+        buildServiceIntent(
+            buildNotificationBundle("service-action-remote-input"),
+            buildPressActionBundle("reply", null, null));
+    Bundle remoteInputResults = new Bundle();
+    remoteInputResults.putCharSequence(ReceiverService.REMOTE_INPUT_RECEIVER_KEY, "Accepted");
+    RemoteInput.addResultsToIntent(
+        new RemoteInput[] {
+          new RemoteInput.Builder(ReceiverService.REMOTE_INPUT_RECEIVER_KEY).build()
+        },
+        intent,
+        remoteInputResults);
+
+    service.onStartCommand(intent, 0, 1);
+
+    assertEquals("one NotificationEvent should be posted", 1, capture.events.size());
+    NotificationEvent event = capture.events.get(0);
+    assertEquals(NotificationEvent.TYPE_ACTION_PRESS, event.getType());
+    assertEquals("service-action-remote-input", event.getNotification().getId());
+    assertNotNull("ACTION_PRESS extras should be preserved", event.getExtras());
+    assertPressAction(event.getExtras(), "reply", null, null);
+    assertEquals(
+        "remote input result should be preserved",
+        "Accepted",
+        event.getExtras().getString("input"));
+    assertNull(
+        "no-launch remote input ACTION_PRESS should not post InitialNotificationEvent",
         EventBus.getStickyEvent(InitialNotificationEvent.class));
   }
 
