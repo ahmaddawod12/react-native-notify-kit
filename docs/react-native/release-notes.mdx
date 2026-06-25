@@ -5,6 +5,28 @@ description: react-native-notify-kit API releases
 
 ## Unreleased (next release)
 
+## [10.4.5] (2026-06-25)
+
+This 10.4.5 maintenance update fixes Android background notification action routing and a stale React context recovery edge case in headless background tasks. It also clarifies Android scheduled trigger recovery and Expo CNG/prebuild behavior for local scheduled triggers.
+
+### Android Notification Actions
+
+- Kept Android 12+ notification actions without `launchActivity` or `mainComponent` on the `ReceiverService` path instead of always routing them through the launch-activity `PendingIntent`.
+
+### Android Headless Tasks
+
+- Fixed a `HeadlessTask` stale `ReactContext` edge case where the cached initialized state could remain true while the current `ReactContext` was null.
+- Background tasks now treat that state as stale, restart the ReactHost initialization path, and drain queued tasks only after a valid `ReactContext` is available.
+
+### Documentation
+
+- Clarified Android scheduled trigger reboot recovery, exact-alarm fallback behavior, and Expo CNG/prebuild manifest-merge behavior for local scheduled triggers.
+
+### Validation
+
+- Added targeted `HeadlessTask` regression coverage for stale/null `ReactContext` recovery.
+- Validated the no-launch notification action background path on a physical Pixel 9 Pro XL running Android 16.
+
 ## [10.4.4] (2026-05-29)
 
 This 10.4.4 maintenance update records Android Java guard, documentation, repository tooling, and test harness updates already validated on the maintenance branch. It does not change the public JavaScript API or notification runtime behavior.
