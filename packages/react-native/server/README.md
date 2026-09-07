@@ -24,6 +24,8 @@ const message = buildNotifyKitPayload({
     android: {
       channelId: 'orders',
       smallIcon: 'ic_notification',
+      showTimestamp: true,
+      timestamp: Date.now(),
       pressAction: { id: 'open-order' },
     },
     ios: {
@@ -43,6 +45,8 @@ await admin.messaging().send(message);
 ```
 
 `options.ttl` is expressed in seconds. Pass the message directly to Firebase Admin without an adapter or a manual unit conversion.
+
+Android `showTimestamp` and `timestamp` stay inside the `_v: 1` `notifee_options` blob and are reconstructed client-side using the existing Android notification semantics. They are not Firebase Admin `android.notification` fields; the Android message remains data-only.
 
 ## API
 

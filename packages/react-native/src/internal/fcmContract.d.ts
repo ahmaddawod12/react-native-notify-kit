@@ -35,6 +35,8 @@ export type NotifyKitAndroidConfig = {
   pressAction?: NotifyKitPressAction;
   actions?: NotifyKitAndroidAction[];
   style?: NotifyKitAndroidStyle;
+  showTimestamp?: boolean;
+  timestamp?: number;
 };
 
 export type NotifyKitIosAttachment = {

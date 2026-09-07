@@ -53,6 +53,37 @@ describe('Android-specific config routed through notifee_options', () => {
   const parseNotifeeOptions = (payload: ReturnType<typeof buildNotifyKitPayload>) =>
     JSON.parse(payload.data.notifee_options as string);
 
+  it('accepts typed timestamp fields and preserves them in notifee_options', () => {
+    const input: NotifyKitPayloadInput = {
+      token: 't',
+      notification: {
+        title: 'a',
+        body: 'b',
+        android: {
+          channelId: 'orders',
+          showTimestamp: true,
+          timestamp: 1_700_000_000_000,
+        },
+      },
+    };
+
+    const payload = buildNotifyKitPayload(input);
+    const parsed = parseNotifeeOptions(payload);
+
+    expect(parsed).toEqual({
+      _v: 1,
+      title: 'a',
+      body: 'b',
+      android: {
+        channelId: 'orders',
+        showTimestamp: true,
+        timestamp: 1_700_000_000_000,
+      },
+    });
+    expect(payload.android).toEqual({ priority: 'high' });
+    expect('notification' in payload.android).toBe(false);
+  });
+
   it('preserves channelId, smallIcon, largeIcon, color in notifee_options', () => {
     const payload = buildNotifyKitPayload({
       token: 't',

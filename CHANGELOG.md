@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **FCM Mode / Server SDK**: fixed Android `showTimestamp` and `timestamp` handling so `buildNotifyKitPayload()` preserves both fields in `_v: 1` `notifee_options` through client reconstruction, enabling the existing Android timestamp display and sorting behavior for FCM Mode notifications. Issue #73.
+
 ## [10.7.0] - 2026-08-31
 
 ### Added

@@ -559,6 +559,70 @@ describe('handleFcmMessage — error resilience', () => {
 // ===================================================================
 
 describe('reconstructNotification — defense-in-depth', () => {
+  it('preserves boolean showTimestamp and a positive numeric timestamp', () => {
+    setPlatform('android');
+    const n = reconstructNotification(
+      {
+        _v: 1,
+        title: 'a',
+        body: 'b',
+        android: {
+          channelId: 'time',
+          showTimestamp: false,
+          timestamp: 1_700_000_000_000,
+        },
+      },
+      {},
+      {},
+    );
+
+    expect(n.android).toEqual({
+      channelId: 'time',
+      showTimestamp: false,
+      timestamp: 1_700_000_000_000,
+    });
+  });
+
+  it('does not propagate invalid timestamp field values', () => {
+    setPlatform('android');
+    const invalidPrimitives = reconstructNotification(
+      {
+        _v: 1,
+        title: 'a',
+        body: 'b',
+        android: { channelId: 'time', showTimestamp: 'true', timestamp: '1700000000000' },
+      },
+      {},
+      {},
+    );
+    const nonPositiveTimestamp = reconstructNotification(
+      {
+        _v: 1,
+        title: 'a',
+        body: 'b',
+        android: { channelId: 'time', timestamp: 0 },
+      },
+      {},
+      {},
+    );
+
+    expect(invalidPrimitives.android).toEqual({ channelId: 'time' });
+    expect(nonPositiveTimestamp.android).toEqual({ channelId: 'time' });
+  });
+
+  it('leaves timestamp fields absent when the payload omits them', () => {
+    setPlatform('android');
+    const n = reconstructNotification(
+      { _v: 1, title: 'a', body: 'b', android: { channelId: 'existing' } },
+      {},
+      {},
+    );
+
+    expect(n.android).toEqual({ channelId: 'existing' });
+    expect(Object.prototype.hasOwnProperty.call(n.android, 'showTimestamp')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(n.android, 'timestamp')).toBe(false);
+  });
+
   it('unknown android.style.type: warns and omits style', () => {
     setPlatform('android');
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -798,6 +862,35 @@ describe('buildFcmNotification', () => {
     );
     expect(notification).not.toBeInstanceOf(Promise);
     expect(displaySpy).not.toHaveBeenCalled();
+  });
+
+  it('exposes timestamp fields and handleFcmMessage forwards them for display', async () => {
+    setPlatform('android');
+    const remoteMessage: FcmRemoteMessage = {
+      messageId: 'timestamp-id',
+      data: {
+        notifee_options: JSON.stringify({
+          _v: 1,
+          title: 'Timestamp',
+          body: 'Preserved',
+          android: {
+            channelId: 'time',
+            showTimestamp: true,
+            timestamp: 1_700_000_000_000,
+          },
+        }),
+      },
+    };
+
+    const built = apiModule.buildFcmNotification(remoteMessage);
+    await apiModule.handleFcmMessage(remoteMessage);
+
+    expect(built?.android).toEqual({
+      channelId: 'time',
+      showTimestamp: true,
+      timestamp: 1_700_000_000_000,
+    });
+    expect(displaySpy).toHaveBeenCalledWith(built);
   });
 
   it('returns null for an absent payload when fallbackBehavior is ignore', async () => {

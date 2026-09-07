@@ -532,6 +532,8 @@ type NotifyKitAndroidConfig = {
   pressAction?: { id: string; launchActivity?: string };
   actions?: Array<{ title: string; pressAction: { id; launchActivity? }; input?: boolean }>;
   style?: { type: 'BIG_TEXT'; text: string } | { type: 'BIG_PICTURE'; picture: string };
+  showTimestamp?: boolean; // show timestamp when timestamp is set
+  timestamp?: number; // milliseconds; used for display and notification-panel sorting
 };
 
 type NotifyKitIosConfig = {
@@ -996,6 +998,8 @@ If `hasNotifeeOptions=false`, the server didn't send a NotifyKit-shaped payload 
 ### Data-only delivery
 
 The server SDK always emits an Android data-only message — there's no `notification` field in the FCM payload. That's what makes `setBackgroundMessageHandler` / `onMessage` fire instead of the FCM SDK auto-displaying.
+
+Android notification fields, including `showTimestamp` and `timestamp`, are serialized inside the `_v: 1` `notifee_options` blob and reconstructed client-side by `handleFcmMessage`. They are not mapped to Firebase Admin's `android.notification` object.
 
 ### Channels are your responsibility
 
