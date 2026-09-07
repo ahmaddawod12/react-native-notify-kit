@@ -5,6 +5,14 @@ description: react-native-notify-kit API releases
 
 ## Unreleased (next release)
 
+## [10.7.1] (2026-09-07)
+
+This 10.7.1 maintenance update fixes Android notification timestamp preservation in FCM Mode and the Server SDK.
+
+### FCM Mode / Server SDK
+
+- Fixed Android `showTimestamp` and `timestamp` handling so `buildNotifyKitPayload()` preserves both fields in `_v: 1` `notifee_options` through client reconstruction, enabling the existing Android timestamp display and sorting behavior for FCM Mode notifications. Issue #73.
+
 ## [10.7.0] (2026-08-31)
 
 This 10.7.0 update adds Expo CNG support for generating Android small notification icon resources from project-relative PNG files.
