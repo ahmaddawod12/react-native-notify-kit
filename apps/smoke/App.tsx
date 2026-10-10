@@ -40,6 +40,10 @@ import {
   extractIssue44FgsStopDeepLink,
 } from './issue44FgsStopHarness';
 import { executeRebootSmokeDeepLink, extractRebootSmokeDeepLink } from './rebootSmokeHarness';
+import { extractIssue81DeepLink, installIssue81SmokeRouter } from './issue81FgsRedeliveryHarness';
+
+// App is imported before index.js registers the default FGS runner.
+const issue81Harness = installIssue81SmokeRouter();
 
 // VERIFY-549 AUTO-RUN FLAG — sed-toggled by scripts/verify-549-fix.sh.
 // When true, the app launches directly into the race-test screen and auto-runs
@@ -397,6 +401,11 @@ function App() {
         return;
       }
 
+      if (issue81Harness.isActive()) {
+        logSmokeResult({ scenario: 'issue44-fgs-stop', status: 'FAIL', reason: 'issue81_active' });
+        return;
+      }
+
       log(`Issue44 FGS stop deep link types: ${request.rawTypes}`);
       executeIssue44FgsStopDeepLink(request).catch((e: unknown) => {
         logSmokeResult({
@@ -422,6 +431,48 @@ function App() {
     });
 
     return () => {
+      subscription.remove();
+    };
+  }, [log]);
+
+  // Issue #81 persistent FGS commands (explicit Activity deep link).
+  useEffect(() => {
+    let current = true;
+    const handleUrl = (url: string) => {
+      if (!current) {
+        return;
+      }
+      const request = extractIssue81DeepLink(url);
+      if (request) {
+        void issue81Harness.execute(request).catch(error => {
+          if (!current) {
+            return;
+          }
+          console.log(
+            `ISSUE81:ERROR ${JSON.stringify({
+              correlationId: request.correlationId,
+              loggedAt: Date.now(),
+              reason: smokeErrorReason(error),
+            })}`,
+          );
+        });
+      }
+    };
+    void Linking.getInitialURL()
+      .then(url => {
+        if (current && url) {
+          handleUrl(url);
+        }
+      })
+      .catch(error => {
+        if (!current) {
+          return;
+        }
+        log(`Issue81 initial URL error: ${smokeErrorReason(error)}`);
+      });
+    const subscription = Linking.addEventListener('url', event => handleUrl(event.url));
+    return () => {
+      current = false;
       subscription.remove();
     };
   }, [log]);
@@ -554,6 +605,19 @@ function App() {
 
   const run = useCallback(
     async (label: string, fn: () => Promise<unknown>) => {
+      if (
+        issue81Harness.isActive() &&
+        [
+          'startForegroundService',
+          'stopForegroundService',
+          'startFgsNoType',
+          'prewarmForegroundService',
+          'startFgsNoOngoing',
+        ].includes(label)
+      ) {
+        log(`${label}: blocked while Issue81 owns the FGS`);
+        return;
+      }
       try {
         const result = await fn();
         log(`${label}: OK ${result != null ? JSON.stringify(result) : ''}`);
