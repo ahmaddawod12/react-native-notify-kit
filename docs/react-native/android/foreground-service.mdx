@@ -9,8 +9,8 @@ by the user and lives for the duration of the service.
 
 <Vimeo id="386254150" caption="Android Foreground Service" />
 
-The service task can run for as long as required whilst the application is open, alive or killed. Once the task has complete
-the service is stopped and the notification is removed. Examples of when to use a Foreground Service are:
+The service task can continue while the application is in the background, subject to Android and device restrictions.
+Once the task completes, the service is stopped and the notification is removed. Examples of when to use a Foreground Service are:
 
 - Capturing on-going information (such as current location for a fitness or delivery app).
 - Playing media to the user.
@@ -43,9 +43,17 @@ Calling `stopForegroundService()` stops the active service and removes its notif
 the call is a no-op. Duplicate STOP calls are safe, and the library does not cold-start a `ForegroundService` just to stop it.
 
 On Android 12+ (API 31+), a `ForegroundServiceStartNotAllowedException` in the defensive terminal STOP/null path is handled
-without crashing the process. This denial handling does not apply to real START failures, unrelated errors, or configuration failures.
+non-fatally. The unreleased fix for [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81) also automatically
+handles a narrow START case: after process death, Android may retry or redeliver
+a START that the new process no longer tracks. If the command carries Android's RETRY/REDELIVERY flags and a valid request
+ID, and no foreground state or service runner has been acquired, denial of the initial `startForeground()` promotion is
+non-fatal. The library does not treat the denied promotion as successful or start a runner for that command.
+It attempts to stop that service instance while preserving other pending STARTs. If they prevent stopping,
+it re-evaluates the stop once none remain pending after definite rejection, provided the denied delivery is still current.
 
-The service can also be stopped by the device (e.g. low memory) or if the user force quits from the application settings.
+Ordinary app-requested START failures, unrelated errors, and invalid configurations retain their existing error handling.
+This recovery does not bypass Android's background restrictions or guarantee service survival or restart under Android/OEM
+policies. The device can stop the service (e.g. low memory), as can a user force quit from the application settings.
 
 ### Attach a notification
 

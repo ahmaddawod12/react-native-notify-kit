@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android / foreground services**: on Android 12+ (API 31+), a framework-retried or redelivered START after process death no longer fatally propagates `ForegroundServiceStartNotAllowedException` when background restrictions deny its initial `startForeground()` promotion. This non-fatal recovery applies only to a START with framework RETRY/REDELIVERY flags, a valid explicit request UUID absent from pending requests, and no acquired foreground state or service runner. It does not claim a successful promotion or settle other pending STARTs; stopping is deferred while they remain pending and re-evaluated once none remain pending after definite rejection, provided the denied delivery is still current. Ordinary app-requested START failures, unrelated errors, and invalid configurations retain their existing error handling. No public API changes. [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81).
+
+### Tests
+
+- **Android / foreground services**: 394 Android tests passed, including #81 regressions for RETRY/REDELIVERY eligibility, initial promotion denial, error boundaries, concurrent pending STARTs, deferred stop after definite rejection, and stale instance/runner ownership. Independent reviews approved the fix.
+- **Android / foreground-service runtime**: persistent START, notification update, background operation, and STOP smoke checks passed on a Pixel 9 Pro XL running Android 17/API 37. Two real SIGKILLs inside `onStartCommand`, before acknowledgement to Android's Activity Manager, were followed by automatic service restart and allowed foreground promotion. RETRY/REDELIVERY flags on the restarted deliveries were not captured. Promotion denial after restart was not reproduced, so the specific #81 recovery was not exercised on the Pixel; runtime recovery on vivo/Android 16 remains unverified.
+
 ## [10.8.0] - 2026-09-29
 
 ### Added
