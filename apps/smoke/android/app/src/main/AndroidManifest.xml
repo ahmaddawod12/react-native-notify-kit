@@ -66,6 +66,10 @@
         android:name="app.notifee.core.ForegroundService"
         android:exported="false"
         android:foregroundServiceType="${notifeeForegroundServiceType}" />
+      <receiver
+        android:name=".Issue82ReceiptReceiver"
+        android:exported="true"
+        android:permission="android.permission.DUMP" />
       <profileable android:shell="true" tools:targetApi="29" />
     </application>
 </manifest>

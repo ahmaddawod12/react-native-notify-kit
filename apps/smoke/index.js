@@ -14,11 +14,19 @@ import {
   getMessaging,
   setBackgroundMessageHandler,
 } from '@react-native-firebase/messaging/lib/modular';
-import { Alert, AppRegistry, Platform } from 'react-native';
+import { Alert, AppRegistry, DeviceEventEmitter, Platform } from 'react-native';
 import notifee, { EventType } from 'react-native-notify-kit';
 import App from './App';
 import { name as appName } from './app.json';
 import { logSmokeEvent } from './smokeAutomation';
+import { issue82Harness } from './issue82DataSyncBudgetHarness';
+
+// Smoke-only signed receipt transport. Never dispatches START or STOP.
+DeviceEventEmitter.addListener('Issue82SignedReceipt', payload => {
+  issue82Harness.receiveReceipt(payload?.correlationId, payload?.wire).catch(error => {
+    console.log('ISSUE82:RECEIPT_TRANSPORT_REJECTED', String(error));
+  });
+});
 
 // Build a reverse map from numeric EventType values to readable names.
 // Uses the runtime enum object as single source of truth.
@@ -31,6 +39,9 @@ const EVENT_NAMES = Object.fromEntries(
 // Handle notification events when the app is in the background or killed.
 // Must be registered before AppRegistry.registerComponent().
 notifee.onBackgroundEvent(async ({ type, detail }) => {
+  if (await issue82Harness.handle({ type, detail })) {
+    return;
+  }
   const typeName = EVENT_NAMES[type] ?? String(type);
   console.log(
     `[BackgroundEvent] type=${typeName} id=${detail.notification?.id ?? '?'} ` +
@@ -66,6 +77,10 @@ globalThis.__NOTIFEE_SMOKE_BACKGROUND_HANDLER_REGISTERED__ = true;
 // Android-only API — no-op on iOS but guarded for clarity.
 if (Platform.OS === 'android') {
   notifee.registerForegroundService(notification => {
+    const issue82Work = issue82Harness.runner(notification);
+    if (issue82Work) {
+      return issue82Work;
+    }
     return new Promise(resolve => {
       console.log('[ForegroundService] started for', notification.id);
       // Resolve immediately for smoke testing; real apps do long-running work here.

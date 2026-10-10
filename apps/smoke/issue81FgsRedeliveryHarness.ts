@@ -430,7 +430,13 @@ export function createIssue81Harness(deps: {
           throw new Error('permission_missing');
         }
         const displayed = await deps.api.getDisplayedNotifications();
-        if (displayed.some(item => item.notification.android?.asForegroundService)) {
+        if (
+          displayed.some(
+            item =>
+              item.notification.android?.asForegroundService ||
+              item.notification.data?.smokeScenario === 'issue82-datasync-budget',
+          )
+        ) {
           throw new Error('existing_fgs_notification');
         }
         if (s.stopping || s.halted) {
@@ -495,6 +501,7 @@ export function createIssue81Harness(deps: {
 }
 
 type Issue81Globals = typeof globalThis & {
+  __NOTIFEE_ISSUE82_ARMED__?: boolean;
   __NOTIFEE_ISSUE81_HARNESS__?: ReturnType<typeof createIssue81Harness>;
 };
 const globals = globalThis as Issue81Globals;
@@ -506,6 +513,7 @@ export function installIssue81SmokeRouter() {
       isAndroid: () => Platform.OS === 'android',
       otherScenarioRunning: () =>
         Boolean(
+          globals.__NOTIFEE_ISSUE82_ARMED__ ||
           (globalThis as typeof globalThis & { __NOTIFEE_ISSUE44_RUNNING__?: boolean })
             .__NOTIFEE_ISSUE44_RUNNING__,
         ),

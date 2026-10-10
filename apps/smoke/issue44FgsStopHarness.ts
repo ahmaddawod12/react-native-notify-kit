@@ -278,6 +278,15 @@ export async function executeIssue44FgsStopDeepLink(request: Issue44FgsStopReque
       return;
     }
 
+    // A durable #82 control also reserves the singleton across a cold JS process.
+    const existing = await notifee.getDisplayedNotifications();
+    if (
+      existing.some(item => item.notification.data?.smokeScenario === 'issue82-datasync-budget')
+    ) {
+      failIssue44('issue82_armed');
+      return;
+    }
+
     const recordAudioGranted = await ensureRecordAudioPermission(request.types);
     if (!recordAudioGranted) {
       failIssue44('record_audio_permission_denied', { rawTypes: request.rawTypes });

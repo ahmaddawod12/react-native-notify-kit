@@ -1,0 +1,78 @@
+# Issue 82 dataSync budget diagnostic harness
+
+Current execution uses automatic START/STOP notification actions and the smoke-only DUMP-protected signed receipt receiver. The historical inline-reply instructions below describe the superseded transport; the correction notes at the end record why it was retired. Reinstall is skipped only after a pulled APK hash matches exactly. Warm ARM URLs wait for a real AppState active event through an origin-fenced admission queue.
+
+This harness supplies a real notification-action route. Host tests do **not** qualify Android's background-start exemption, AMS timeout, or Slice D recovery. Review the implementation before device execution.
+
+Build a bundled smoke Release APK with `-PnotifeeForegroundServiceType=dataSync -PreactNativeArchitectures=arm64-v8a`. The normal smoke default is shortService. Do not change permissions, manifest, or policy to bypass a failed background dispatch. API >=35 and notification permission already granted are prerequisites; the driver never grants permissions.
+
+The visible preparation route is `notifykit://issue82/arm?correlationId=<unique-alphanumeric-id>`, or the smoke UI button “Arm notification controls”. Preparation publishes an ordinary ongoing notification on `issue82_datasync_budget`, with body pressAction explicitly null. Its three actions have dedicated IDs and no launchActivity/mainComponent. The existing NotifyKit core therefore chooses its ReceiverService PendingIntent route for these actions, including on API31+; no notification receiver Activity is requested.
+
+Each control persists correlation, attempt, nonce, attemptId and state in native notification extras. The sole existing background handler claims #82 events before its generic Alert branch. The existing foreground runner registration delegates #82 notifications to a persistent Promise; the handler Promise ends after its own dispatch/diagnostic work. There are no FGS notification updates, safety timers, automatic restarts, native inspection APIs, or synthetic intents. Numeric timeout event 9 releases only the matching runner and prepares the next unique attempt. That preparation is not a teardown proof.
+
+Operation:
+
+1. Prepare visibly, then press HOME and prove non-TOP.
+2. In the real Android notification shade, tap “Start dataSync FGS”. The driver can issue actual UI taps or wait for manual taps using `--manual-actions`. It never sends a PendingIntent, broadcast, or service intent directly.
+3. Verify START/action/PID correlation, AMS dataSync promotion and active foreground notification, then runner entry. A resolved display Promise is not promotion evidence.
+4. Feasibility mode taps “Stop owned FGS”, which seals persistent quiescence before STOP. The host verifies the matching process incarnation, promotion, resolved dispatch, attributed STOP and complete AMS teardown, then signs a receipt. With `--manual-actions`, expand the control and focus the inline “Cleanup” reply when prompted. The driver enters the public signed receipt, rechecks its complete text and current Send button, verifies non-TOP and AMS absence again, and taps Send. The existing background ReceiverService routes this reply without opening MainActivity. Preserve the report; full mode requires feasibility PASS matching device build/boot/UID, APK and every source hash.
+5. Full mode saves presence/value of device_config before modifying it, verifies the effective 180000-ms AMS setting, prepares a fresh visible run and begins the negative window after non-TOP confirmation. Wait for native timeout, numeric event 9, and disappearance of the previous ServiceRecord. If JS event delivery is missing, the attempt cannot advance: BLOCKED, with no fabricated timeout.
+6. Tap the same control action after teardown. The new FGS ID and attemptId differ. Require a distinct AMS ServiceRecord identity from a sample or am_create_service, native tracked PROMOTION_DENIED with flags=0, exact framework exception/Service.startForeground stack, and budget evidence combined with the actual timeout and absence of TOP. Dispatch rejection is BLOCKED; uncertain provenance is INCONCLUSIVE.
+7. Observe beyond the effective AMS crash/ANR settings, then optionally use `--post-top-recovery`. This deliberately resets through visible preparation only after the negative witness ends, starts another FGS by real action, then stops it.
+
+Examples for the future authorized Runtime Executor:
+
+```sh
+python3 scripts/smoke-test-82-android-datasync-budget.py \
+  --serial 49021FDAS003BC \
+  --apk /absolute/path/to/reviewed-app-release.apk \
+  --output /tmp/issue82-feasibility-UNIQUE --mode feasibility --manual-actions
+
+python3 scripts/smoke-test-82-android-datasync-budget.py \
+  --serial 49021FDAS003BC \
+  --apk /absolute/path/to/reviewed-app-release.apk \
+  --output /tmp/issue82-budget-UNIQUE --mode full --manual-actions \
+  --feasibility-report /tmp/issue82-feasibility-UNIQUE/report.json \
+  --authorize-budget-change --post-top-recovery
+```
+
+The script installs and pulls the provided APK to verify identity. It refuses preexisting target ServiceRecords. It preserves complete command outputs, logcat, AMS/notification snapshots, package/ExitInfo/settings and reports outside the repository. The negative lane never calls Activity preparation again; sampled UID state and activity events invalidate any observed TOP transition. Unknown parser/state evidence fails closed. Device/host clock offset is measured; exact synchronized clocks are not assumed.
+
+Cleanup restores a present setting with its original value and deletes only an originally absent key, even after a partial failed put or interruption. No compat override is changed. Restoring device_config does not restore the consumed AMS budget. STOP is sent only through an owned control after AMS/PID/notification ownership checks; foreign or unknown ownership leaves cleanup BLOCKED with evidence. No force-stop, uninstall, app data clear or global service cleanup. If public notification state remains pending/unknown, the harness keeps its control rather than inventing absence. Review the retained evidence before another run.
+
+Limitations requiring device review: notification UI layout may require manual expansion/taps; background AppState or event delivery can be unavailable after cold startup; the framework may reject dispatch or generate a different exception; transient ServiceRecord creation may require am_create_service evidence. Native cache absence is inferred from the frozen D branch and corroborated by runner/publication/AMS evidence, not a new inspection API. A finite observation window is not universal OEM/process-survival proof. #44/#81 include small persisted-control guards so a cold process cannot register another runner over an armed #82 scenario. Other ordinary notifications/background handlers keep their existing behavior.
+
+Host-assisted cleanup is smoke-only. Visible ARM receives a per-run RSA2048 public key and device/candidate binding in its diagnostic URL; the host generates the private key outside the repository with mode 0600 and removes it at session end. Neither the key nor any credential is logged or delivered to the app. There is no network endpoint, ADB reverse, new native component, or new NotifyKit API. Inline reply uses the existing public notification input contract. Release cleartext networking is disabled, so HTTP loopback is not used.
+
+The durable ledger records every reserved/dispatched/resolved/rejected request, original JS process run, timeout and acknowledged STOP. Promise settlement never clears `nativeOutstanding`. STOP serializes behind dispatch, seals a fresh epoch, prevents START/rearm/timeout advancement and persists the ledger. A missing history, pending/rejected request, foreign control, process restart or AMS UNKNOWN prevents certification. Full cleanup needs two separate proofs: the genuinely promoted timed-out service and the subsequent distinct native denial with accepted STOP; teardown of the first does not certify the second.
+
+```text
+ARM(open, public session) -> reserve -> dispatch -> Promise settled
+  -> host verifies promotion -> STOP action -> quiesced(epoch, ledger)
+  -> attributed STOP -> host verifies matching AMS teardown
+  -> signed one-use receipt -> inline CLEANUP reply
+  -> verify signature/session/token/epoch/complete ledger
+  -> persist certified -> recheck ownership/background/expiry -> cancel control
+  -> FEASIBILITY PASS -> matching full-mode eligibility
+```
+
+Receipts expire within 60 seconds using device time and bind serial/build/boot, package/UID, APK/source fingerprint, process birth, correlation/attempt/control nonce, epoch, ledger, ServiceRecord/startId, terminal evidence and subsequent VERIFIED_ABSENT. The app checks the signed binding against its persisted session/ledger and original consumer run; the host independently revalidates exact live PID/starttime and all runtime gates before signing. Only individually certified obligations can clear `nativeOutstanding`. Duplicate or stale replies have no cleanup effect. Failure preserves the control. A failed final cancellation requires another STOP/seal and a fresh receipt; cold reconstruction preserves obligations conservatively and cannot consume an old process receipt. Irrecoverable or unprovable history stays BLOCKED.
+
+Transport qualification is still required on Android: manual expansion/focus, full multi-KB RemoteInput text visibility, shell input duration and the receipt expiry window are device-dependent. Truncation, interruption, stale UI or loss of non-TOP/AMS absence fails closed. Host simulated end-to-end PASS demonstrates reachable driver criteria and app consumption, not Android exemption, timeout/denial policy or actual transport reliability. Do not use simulation reports as runtime feasibility provenance.
+
+The driver qualifies process incarnations using PID, package/process name, UID, boot ID and `/proc/<pid>/stat` starttime, with two stat reads around identity capture. `/proc/stat` boot time and `CLK_TCK` bound process birth before the request. Unavailable or ambiguous identity evidence prevents PASS. Lifecycle events and JS processRunId invalidate continuity irreversibly on death or restart, even when Android reuses the PID for the same package. Initial promotion and denial processes are recorded separately; a legitimate new process before the denied attempt is not credited as survival of the first process. Verified target crashes remain FAIL rather than being downgraded to missing evidence.
+
+AMS observations record PRESENT_TARGET, VERIFIED_ABSENT or UNKNOWN, together with command provenance, separate stdout/stderr, host/remote exit codes and a per-command completion boundary. Only a recognized complete dump can establish absence; `(nothing)` in a valid empty dump is accepted. Pending, delayed, restarting and destroying target records prevent teardown qualification. Diagnostic, empty, truncated and unrecognized output blocks the gate in preparation, both execution modes and cleanup. “Already absent, verified” is reported separately from “STOP observed and teardown verified”.
+
+AMS type parsing accepts numeric `types=0x00000001` on the recognized AOSP16 foreground detail line and the legacy `foregroundServiceType=` field. It parses an unsigned mask; only exact mask 1 qualifies positive dataSync. Duplicate, contradictory or malformed declarations are UNKNOWN; an unqualified type never becomes dataSync. Text in intents/extras is not a type declaration.
+
+
+2026-10-10 real-device transport correction: the Pixel's public FGS reconstruction omits the original android.asForegroundService flag and exposes the signed Java-hash ID. The #82 harness recognizes the exact numeric identity and retains all diagnostic FGS-role records for foreign-ownership rejection. Real SystemUI inline receipt text was only partially exposed (1396 of 4002 characters); that lane failed closed and was retired from the active driver.
+
+The active receipt-only transport is the smoke APK's Issue82ReceiptReceiver, exported with android.permission.DUMP. It accepts only ISSUE82_SIGNED_RECEIPT plus bounded correlation and base64url wire, emits to an already live React context, and cannot start an Activity/Service or bootstrap React. The JS consumer uses the same serialized signed-receipt verification and public cancellation as the former RemoteInput lane. Transport has no signing or cleanup authority. Missing context, stale/foreign/unsigned/replayed receipt, foreground app, incomplete ledger and nonquiescent session cannot certify cleanup. The host rechecks AMS absence and non-TOP immediately before transport. START and STOP always use genuine notification UI actions. No compat override is changed. Use automatic mode without --manual-actions; the driver observes/expands the correlated Attempt control and taps fresh coordinates.
+
+The receipt-only consumer now requires a quiesced diagnostic session with a nonempty ledger before routing to signature verification; unsigned data cannot invoke the ready-session public CLEANUP path. The driver first pulls and hashes the installed APK, skips a byte-identical reinstall, and installs/pulls/verifies only when bytes differ. This avoids stale initial-URL replay during the feasibility-to-full handoff. After an actual diagnostic APK change, preserve evidence and establish target AMS absence before any authorized smoke-only reset; a reset is not certified cleanup.
+
+API37 qualification adds four independent fast AMS collectors, each with device-clock begin/end frames, complete dump headers, separate stderr and remote exit. Only complete valid target records can provide a distinct denied-instance token. Interrupted/diagnostic/remote-error frames provide no witness. A sampled foreground publication of the denied instance fails the lane. Slow ordinary polling and absent am_create_service events do not justify fabricating an instance identity. All collectors are terminated in finally.
+
+Four fast collectors still missed the real API37 denied ServiceRecord. The smoke-only Issue82InstanceObserver reads the application-owned core sInstance field and logs reference transitions with observer UUID, sequence, PID and elapsedRealtimeNanos. It never writes fields, calls core lifecycle methods, uses Android hidden APIs, launches components or changes FGS policy. A native identity proof requires one promoted native reference, its observed release after native timeout, and the next distinct reference during the fresh tracked denial in the same process/observer incarnation. AMS old teardown and final absence remain independent required gates. Native identities are explicitly typed app-owned-native-instance, never reported as AMS ServiceRecord tokens; signed native proof is allowed only for the denied obligation, never positive promotion. Missing/ambiguous observer transitions fail closed. Weak references avoid retaining destroyed Services; JVM visibility can miss transitions but cannot create a new observed reference.

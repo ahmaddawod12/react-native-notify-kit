@@ -85,6 +85,722 @@ public class ForegroundServiceTest {
     setPrivateStatic("mCurrentHashCode", 0);
   }
 
+  // Slice D uses the real UUID reservation/dispatch path. API 36/37 below are policy-boundary
+  // simulations on the API 35 Robolectric runtime; they are not Android 16/17 framework proof.
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_initialTrackedDenial_isSelectiveAndNonFatal() throws Exception {
+    for (String message :
+        new String[] {
+          "Time limit already exhausted for foreground service type dataSync",
+          "Background start not allowed",
+          "opaque",
+          ""
+        }) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Issue81ShadowService.failure = new ForegroundServiceStartNotAllowedException(message);
+      issue81ObserveRecoveryStop(service);
+      Intent a = issue82Dispatch(context, "A", 810);
+      String id = a.getStringExtra(ISSUE81_REQUEST_ID);
+      Object request = issue81Pending().get(id);
+      FgsRunnerCapture capture = new FgsRunnerCapture();
+      EventBus.register(capture);
+      try {
+        int result;
+        try {
+          result = service.onStartCommand(a, 0, 7);
+        } catch (RuntimeException denial) {
+          assertSame(Issue81ShadowService.failure, denial);
+          assertEquals(java.util.Collections.singletonList(810), Issue81ShadowService.promotions);
+          assertEquals(
+              java.util.Collections.singletonList(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+              Issue81ShadowService.types);
+          assertSame(request, issue81Pending().get(id));
+          issue81AssertUnpromoted(service);
+          throw denial; // causal RED: actual tracked initial platform promotion was attempted
+        }
+        assertEquals(Service.START_NOT_STICKY, result);
+        assertTrue(issue81Pending().isEmpty());
+        assertTrue((boolean) issue82RequestField(request, "accepted"));
+        assertTrue((boolean) issue82RequestField(request, "promotionDenied"));
+        issue81AssertUnpromoted(service);
+        assertTrue(capture.events.isEmpty());
+        assertEquals(java.util.Arrays.asList("promote:810", "stop:7"), Issue81ShadowService.order);
+        issue82AssertDiagnostic(id, "accepted");
+      } finally {
+        EventBus.unregister(capture);
+      }
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_api36And37_policyBoundarySimulation() throws Exception {
+    try {
+      for (int api : new int[] {36, 37}) {
+        org.robolectric.util.ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", api);
+        RecordingServiceContext context = useRecordingContext();
+        ForegroundService service = issue81Service();
+        Intent a = issue82Dispatch(context, "A", 810);
+        assertEquals(Service.START_NOT_STICKY, service.onStartCommand(a, 0, 7));
+        issue81AssertUnpromoted(service);
+        assertTrue(issue81Pending().isEmpty());
+        assertEquals(java.util.Collections.singletonList(7), Issue81ShadowService.stops);
+        issue82AssertDiagnostic(a.getStringExtra(ISSUE81_REQUEST_ID), "accepted");
+        issue82DestroyServices();
+      }
+    } finally {
+      org.robolectric.util.ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", 35);
+    }
+  }
+
+  @Test
+  @Config(
+      sdk = {31, 32, 33, 34},
+      shadows = Issue81ShadowService.class)
+  public void issue82_api31Through34_trackedDenialRemainsFatal() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent a = issue82Dispatch(context, "A", 810);
+    Object request = issue81Pending().get(a.getStringExtra(ISSUE81_REQUEST_ID));
+    assertSame(
+        Issue81ShadowService.failure,
+        assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 7)));
+    assertSame(request, issue81Pending().get(a.getStringExtra(ISSUE81_REQUEST_ID)));
+    assertTrue(Issue81ShadowService.stops.isEmpty());
+    issue81AssertUnpromoted(service);
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_otherPromotionExceptionsRemainFatal() throws Exception {
+    for (RuntimeException failure :
+        new RuntimeException[] {
+          new SecurityException("permission"), new MissingForegroundServiceTypeException("missing"),
+          new InvalidForegroundServiceTypeException("invalid"),
+              new IllegalArgumentException("argument"),
+          new IllegalStateException("state"), new RuntimeException("other")
+        }) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      Object request = issue81Pending().get(a.getStringExtra(ISSUE81_REQUEST_ID));
+      Issue81ShadowService.failure = failure;
+      assertSame(
+          failure, assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 7)));
+      assertSame(request, issue81Pending().get(a.getStringExtra(ISSUE81_REQUEST_ID)));
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      issue81AssertUnpromoted(service);
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_untrackedAndWrongActionRemainFatal_incompletePayloadDoesNotPromote()
+      throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    assertSame(
+        Issue81ShadowService.failure,
+        assertThrows(
+            RuntimeException.class, () -> service.onStartCommand(issue81UnknownStart(), 0, 1)));
+    Intent a = issue82Dispatch(context, "A", 810);
+    a.setAction("another.START");
+    assertSame(
+        Issue81ShadowService.failure,
+        assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 2)));
+    a.setAction(ForegroundService.START_FOREGROUND_SERVICE_ACTION);
+    a.removeExtra("notification");
+    service.onStartCommand(a, 0, 3);
+    assertEquals(2, Issue81ShadowService.promotions.size());
+    assertEquals(1, issue81Pending().size());
+    assertTrue(Issue81ShadowService.stops.isEmpty());
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_deniedA_preservesAcceptedAndDeliveredUnfulfilledB() throws Exception {
+    for (boolean delivered : new boolean[] {false, true}) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      Intent b = issue82Dispatch(context, "B", 812);
+      Object request = issue81Pending().get(b.getStringExtra(ISSUE81_REQUEST_ID));
+      if (delivered) {
+        Intent incomplete = new Intent(b);
+        incomplete.removeExtra("notification");
+        service.onStartCommand(incomplete, 0, 6);
+      }
+      assertEquals(Service.START_NOT_STICKY, service.onStartCommand(a, 0, 7));
+      assertSame(request, issue81Pending().get(b.getStringExtra(ISSUE81_REQUEST_ID)));
+      assertEquals(1, issue81Pending().size());
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      issue81AssertUnpromoted(service);
+      assertNotNull(issue81Field(service, "mDeniedStartRecovery"));
+      issue82AssertDiagnostic(a.getStringExtra(ISSUE81_REQUEST_ID), "deferred");
+      service.onStartCommand(b, 0, 8);
+      idleMain();
+      assertCurrentState("B", 812, "B");
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      assertNull(issue81Field(service, "mDeniedStartRecovery"));
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_pendingB_definiteRejectionReevaluatesRecovery_unknownDoesNot()
+      throws Exception {
+    for (RuntimeException reply :
+        new RuntimeException[] {
+          null, new SecurityException("reject"), new IllegalStateException("Binder UNKNOWN")
+        }) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      try (Issue81LateReply b = new Issue81LateReply(reply, false)) {
+        b.awaitDispatch();
+        Object request = issue81Pending().get(b.intent.getStringExtra(ISSUE81_REQUEST_ID));
+        assertFalse((boolean) issue82RequestField(request, "accepted"));
+        assertEquals(Service.START_NOT_STICKY, service.onStartCommand(a, 0, 7));
+        assertSame(request, issue81Pending().get(b.intent.getStringExtra(ISSUE81_REQUEST_ID)));
+        assertTrue(Issue81ShadowService.stops.isEmpty());
+        issue82AssertDiagnostic(a.getStringExtra(ISSUE81_REQUEST_ID), "deferred");
+        b.settle();
+        assertSame(reply, b.failure.get());
+        idleMain();
+        if (reply instanceof IllegalStateException) {
+          assertSame(request, issue81Pending().get(b.intent.getStringExtra(ISSUE81_REQUEST_ID)));
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+          assertNotNull(issue81Field(service, "mDeniedStartRecovery"));
+          service.onStartCommand(b.intent, 0, 8);
+          assertCurrentState("B", 812, "B");
+        } else {
+          assertTrue(issue81Pending().isEmpty());
+          assertEquals(java.util.Collections.singletonList(7), Issue81ShadowService.stops);
+          issue82AssertDiagnostic(a.getStringExtra(ISSUE81_REQUEST_ID), "accepted");
+        }
+      }
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_pendingB_acceptanceInvalidatesRecovery() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent a = issue82Dispatch(context, "A", 810);
+    try (Issue81LateReply b = new Issue81LateReply(null, true)) {
+      b.awaitDispatch();
+      service.onStartCommand(a, 0, 7);
+      b.settle();
+      idleMain();
+      assertNull(issue81Field(service, "mDeniedStartRecovery"));
+      assertEquals(1, issue81Pending().size());
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      service.onStartCommand(b.intent, 0, 8);
+      assertCurrentState("B", 812, "B");
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_lateAReply_doesNotResurrectOrCancelLaterStop() throws Exception {
+    for (RuntimeException reply :
+        new RuntimeException[] {
+          null, new SecurityException("late negative"), new IllegalStateException("late UNKNOWN")
+        }) {
+      for (boolean positive : new boolean[] {false, true}) {
+        ForegroundService service = issue81Service();
+        Issue81ShadowService.stopResult = false;
+        try (Issue81LateReply a = new Issue81LateReply(reply, positive, "A", 810)) {
+          a.awaitDispatch();
+          String id = a.intent.getStringExtra(ISSUE81_REQUEST_ID);
+          Object request = issue81Pending().get(id);
+          service.onStartCommand(a.intent, 0, 7);
+          assertTrue(issue81Pending().isEmpty());
+          assertTrue((boolean) issue82RequestField(request, "accepted"));
+          ForegroundService.stop();
+          Object stop = getPrivateStatic("sStopRequest");
+          a.settle();
+          assertSame(reply, a.failure.get());
+          assertTrue(issue81Pending().isEmpty());
+          assertSame(stop, getPrivateStatic("sStopRequest"));
+          idleMain();
+          assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+        }
+        issue82DestroyServices();
+      }
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_lateAReply_doesNotInvalidateNewRecovery() throws Exception {
+    for (RuntimeException reply :
+        new RuntimeException[] {
+          null, new SecurityException("late negative"), new IllegalStateException("late UNKNOWN")
+        }) {
+      for (boolean positive : new boolean[] {false, true}) {
+        RecordingServiceContext context = useRecordingContext();
+        ForegroundService service = issue81Service();
+        Intent b = issue82Dispatch(context, "B", 812);
+        try (Issue81LateReply a = new Issue81LateReply(reply, positive, "A", 810)) {
+          a.awaitDispatch();
+          service.onStartCommand(a.intent, 0, 7);
+          Object first = issue81Field(service, "mDeniedStartRecovery");
+          service.onStartCommand(issue81UnknownStart(), Service.START_FLAG_RETRY, 8);
+          Object newer = issue81Field(service, "mDeniedStartRecovery");
+          assertNotNull(newer);
+          assertFalse(first == newer);
+          a.settle();
+          assertSame(reply, a.failure.get());
+          idleMain();
+          assertSame(newer, issue81Field(service, "mDeniedStartRecovery"));
+          assertEquals(1, issue81Pending().size());
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+          service.onStartCommand(b, 0, 9);
+          assertCurrentState("B", 812, "B");
+        }
+        issue82DestroyServices();
+      }
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_stopRefusedOrThrows_doesNotCleanOrRetry() throws Exception {
+    for (boolean throwsStop : new boolean[] {false, true}) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      Issue81ShadowService.stopResult = false;
+      if (throwsStop) {
+        Issue81ShadowService.stopFailure = new SecurityException("stop failed");
+        assertSame(
+            Issue81ShadowService.stopFailure,
+            assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 7)));
+      } else {
+        assertEquals(Service.START_NOT_STICKY, service.onStartCommand(a, 0, 7));
+      }
+      assertTrue(issue81Pending().isEmpty());
+      issue81AssertUnpromoted(service);
+      assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+      assertNull(issue81Field(service, "mDeniedStartRecovery"));
+      issue82AssertDiagnostic(
+          a.getStringExtra(ISSUE81_REQUEST_ID), throwsStop ? "failed" : "refused");
+      idleMain();
+      assertEquals(java.util.Collections.singletonList(7), Issue81ShadowService.stops);
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_failedReplacement_preservesPromotedBAndRunner() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    FgsRunnerCapture capture = new FgsRunnerCapture();
+    EventBus.register(capture);
+    try {
+      Intent b = issue82Dispatch(context, "B", 812);
+      service.onStartCommand(b, 0, 1);
+      Object runner = issue81Field(service, "mRunnerToken");
+      Object bundle = getPrivateStatic("mCurrentNotificationBundle");
+      ForegroundService.stop();
+      Intent a = issue82Dispatch(context, "A", 810);
+      assertSame(
+          Issue81ShadowService.failure,
+          assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 2)));
+      assertCurrentState("B", 812, "B");
+      assertSame(bundle, getPrivateStatic("mCurrentNotificationBundle"));
+      assertEquals(
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+          ForegroundService.mCurrentForegroundServiceType);
+      assertSame(runner, issue81Field(service, "mRunnerToken"));
+      assertTrue(ForegroundService.repostIfActive("B"));
+      assertEquals(1, capture.events.size());
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      assertNull(issue81Field(service, "mDeniedStartRecovery"));
+      capture.events.get(0).setCompletionResult();
+      idleMain();
+      assertCurrentState("B", 812, "B");
+    } finally {
+      EventBus.unregister(capture);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_postTimeoutSameInstance_isExplicitlyExcluded() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent b = issue82Dispatch(context, "B", 812);
+    service.onStartCommand(b, 0, 1);
+    service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    assertTrue((boolean) issue81Field(service, "mStartForegroundCalled"));
+    assertEquals(1, issue81Field(service, "mRunFirstStartId"));
+    Intent a = issue82Dispatch(context, "A", 810);
+    assertSame(
+        Issue81ShadowService.failure,
+        assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 2)));
+    assertEquals(java.util.Arrays.asList(812, 810), Issue81ShadowService.promotions);
+    assertNull(issue81Field(service, "mDeniedStartRecovery"));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_eligibilityRecheckedAfterPromotionAttempt() throws Exception {
+    for (String fieldName :
+        new String[] {
+          "sInstance", "sStateOwner", "sRunGeneration", "mRunGeneration", "mLastStartId"
+        }) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      Field field = ForegroundService.class.getDeclaredField(fieldName);
+      field.setAccessible(true);
+      Object owner = fieldName.startsWith("s") ? null : service;
+      Object original = field.get(owner);
+      Issue81ShadowService.beforePromotion =
+          () -> {
+            try {
+              if (fieldName.endsWith("Generation")) field.set(owner, ((Long) original) + 1);
+              else if (fieldName.equals("mLastStartId")) field.set(owner, 99);
+              else field.set(owner, new ForegroundService());
+            } catch (Exception e) {
+              throw new AssertionError(e);
+            }
+          };
+      try {
+        assertSame(
+            Issue81ShadowService.failure,
+            assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 7)));
+        assertEquals(1, issue81Pending().size());
+        assertTrue(Issue81ShadowService.stops.isEmpty());
+      } finally {
+        field.set(owner, original);
+        Issue81ShadowService.beforePromotion = null;
+      }
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_deferredCallback_revalidatesAllAuthority() throws Exception {
+    for (String fieldName :
+        new String[] {
+          "sInstance", "sStateOwner", "sRunGeneration", "mRunGeneration", "mLastStartId"
+        }) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      try (Issue81LateReply b = new Issue81LateReply(null, false)) {
+        b.awaitDispatch();
+        service.onStartCommand(a, 0, 7);
+        b.settle(); // queues recovery with A's identity, before we revoke one fence
+        Field field = ForegroundService.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        Object owner = fieldName.startsWith("s") ? null : service;
+        Object original = field.get(owner);
+        try {
+          if (fieldName.endsWith("Generation")) field.set(owner, ((Long) original) + 1);
+          else if (fieldName.equals("mLastStartId")) field.set(owner, 99);
+          else field.set(owner, new ForegroundService());
+          idleMain();
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+          assertNull(issue81Field(service, "mDeniedStartRecovery"));
+        } finally {
+          field.set(owner, original);
+        }
+      }
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_trackedFrameworkFlags_useSliceD_notUntrackedRedeliveryPolicy()
+      throws Exception {
+    for (int flags :
+        new int[] {
+          Service.START_FLAG_RETRY,
+          Service.START_FLAG_REDELIVERY,
+          Service.START_FLAG_RETRY | Service.START_FLAG_REDELIVERY
+        }) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      service.onStartCommand(a, flags, 7);
+      assertTrue(issue81Pending().isEmpty());
+      issue81AssertUnpromoted(service);
+      assertEquals(java.util.Collections.singletonList(7), Issue81ShadowService.stops);
+      assertTrue(
+          ShadowLog.getLogsForTag("NOTIFEE").stream()
+              .anyMatch(
+                  item ->
+                      item.msg.contains("PROMOTION_DENIED")
+                          && item.msg.contains("flags=" + flags)));
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_manifestAndNoneDenialsRemainOutsideCatch() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent a = issue82Dispatch(context, "A", 810);
+    a.getBundleExtra("notificationBundle").getBundle("android").remove("foregroundServiceTypes");
+    PackageManager manager = org.mockito.Mockito.mock(PackageManager.class);
+    org.mockito.Mockito.when(
+            manager.getServiceInfo(
+                org.mockito.ArgumentMatchers.any(ComponentName.class),
+                org.mockito.ArgumentMatchers.anyInt()))
+        .thenThrow(Issue81ShadowService.failure);
+    ContextHolder.setApplicationContext(
+        new ContextWrapper(RuntimeEnvironment.getApplication()) {
+          @Override
+          public PackageManager getPackageManager() {
+            return manager;
+          }
+        });
+    assertSame(
+        Issue81ShadowService.failure,
+        assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 7)));
+    assertTrue(Issue81ShadowService.promotions.isEmpty());
+    assertEquals(1, issue81Pending().size());
+    // Actual resolved NONE reaches the defensive placeholder, not the initial real promotion.
+    ContextHolder.setApplicationContext(null);
+    RuntimeException denial =
+        assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 8));
+    assertSame(Issue81ShadowService.failure, denial.getCause());
+    assertEquals(
+        java.util.Collections.singletonList(Integer.MAX_VALUE - 1),
+        Issue81ShadowService.promotions);
+    assertTrue(Issue81ShadowService.stops.isEmpty());
+    assertEquals(1, issue81Pending().size());
+  }
+
+  @Test
+  @Config(
+      sdk = 35,
+      shadows = {Issue81ShadowService.class, Issue81NotificationShadowManager.class})
+  public void issue82_trackedSameIdNotifyAndTypeChangeDenials_preserveState() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent b = issue82Dispatch(context, "B", 812);
+    service.onStartCommand(b, 0, 1);
+    Object runner = issue81Field(service, "mRunnerToken");
+    Object bundle = getPrivateStatic("mCurrentNotificationBundle");
+    for (int type :
+        new int[] {
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        }) {
+      Intent update = buildStartIntent("B", 812, "A", type);
+      ForegroundService.start(
+          812,
+          update.getParcelableExtra("notification"),
+          update.getBundleExtra("notificationBundle"));
+      Intent delivered = context.starts.get(context.starts.size() - 1);
+      assertSame(
+          Issue81ShadowService.failure,
+          assertThrows(RuntimeException.class, () -> service.onStartCommand(delivered, 0, 2)));
+      assertCurrentState("B", 812, "B");
+      assertSame(bundle, getPrivateStatic("mCurrentNotificationBundle"));
+      assertSame(runner, issue81Field(service, "mRunnerToken"));
+      assertEquals(
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+          ForegroundService.mCurrentForegroundServiceType);
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      assertNull(issue81Field(service, "mDeniedStartRecovery"));
+    }
+    assertEquals(java.util.Arrays.asList(812, 812), Issue81ShadowService.promotions);
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_supersededTrackedDenial_isExcluded() throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent a = issue82Dispatch(context, "A", 810);
+    ForegroundService.stop();
+    Intent b = issue82Dispatch(context, "B", 812);
+    FgsRunnerCapture capture = new FgsRunnerCapture();
+    EventBus.register(capture);
+    try {
+      service.onStartCommand(b, 0, 1);
+      capture.events.get(0).setCompletionResult();
+      assertSame(
+          Issue81ShadowService.failure,
+          assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 2)));
+      assertEquals(1, issue81Pending().size());
+      assertTrue(Issue81ShadowService.stops.isEmpty());
+      assertNull(issue81Field(service, "mDeniedStartRecovery"));
+    } finally {
+      EventBus.unregister(capture);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_requestIdentityAndOwnership_fencedBeforeAndAfterAttempt() throws Exception {
+    for (boolean duringAttempt : new boolean[] {false, true}) {
+      for (String authority : new String[] {"sInstance", "sStateOwner", "request"}) {
+        RecordingServiceContext context = useRecordingContext();
+        ForegroundService service = issue81Service();
+        Intent a = issue82Dispatch(context, "A", 810);
+        String id = a.getStringExtra(ISSUE81_REQUEST_ID);
+        Field field =
+            ForegroundService.class.getDeclaredField(
+                authority.equals("request") ? "sPendingStarts" : authority);
+        field.setAccessible(true);
+        Object original = field.get(null);
+        Runnable revoke =
+            () -> {
+              try {
+                if (authority.equals("request")) issue81Pending().remove(id);
+                else field.set(null, new ForegroundService());
+              } catch (Exception e) {
+                throw new AssertionError(e);
+              }
+            };
+        if (duringAttempt) Issue81ShadowService.beforePromotion = revoke;
+        else revoke.run();
+        try {
+          assertSame(
+              Issue81ShadowService.failure,
+              assertThrows(RuntimeException.class, () -> service.onStartCommand(a, 0, 7)));
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+        } finally {
+          if (!authority.equals("request")) field.set(null, original);
+          Issue81ShadowService.beforePromotion = null;
+        }
+        issue82DestroyServices();
+      }
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_deferredRecovery_newAdmissionStopAndDestroyInvalidateStaleCallback()
+      throws Exception {
+    for (String action : new String[] {"admission", "stop", "destroy", "delivery"}) {
+      RecordingServiceContext context = useRecordingContext();
+      ForegroundService service = issue81Service();
+      Intent a = issue82Dispatch(context, "A", 810);
+      try (Issue81LateReply b = new Issue81LateReply(null, false)) {
+        b.awaitDispatch();
+        service.onStartCommand(a, 0, 7);
+        Object recovery = issue81Field(service, "mDeniedStartRecovery");
+        b.settle(); // queued callback carries recovery A; lifecycle changes happen before it runs
+        if (action.equals("admission")) {
+          Intent c = issue82Dispatch(useRecordingContext(), "C", 814);
+          assertNull(issue81Field(service, "mDeniedStartRecovery"));
+          idleMain();
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+          service.onStartCommand(c, 0, 8);
+          assertCurrentState("C", 814, "C");
+        } else if (action.equals("stop")) {
+          ForegroundService.stop();
+          assertNull(issue81Field(service, "mDeniedStartRecovery"));
+          idleMain();
+          assertEquals(java.util.Collections.singletonList(7), Issue81ShadowService.stops);
+          assertFalse(
+              ShadowLog.getLogsForTag("NOTIFEE").stream()
+                  .anyMatch(
+                      item ->
+                          item.msg.contains("PROMOTION_DENIED")
+                              && item.msg.contains("stop=accepted")));
+        } else if (action.equals("destroy")) {
+          issue82DestroyServices();
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+        } else {
+          Intent incomplete = new Intent().setAction("incomplete");
+          service.onStartCommand(incomplete, 0, 8);
+          idleMain();
+          assertTrue(Issue81ShadowService.stops.isEmpty());
+        }
+        assertNotNull(recovery);
+        assertNull(issue81Field(service, "mDeniedStartRecovery"));
+      }
+      issue82DestroyServices();
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  public void issue82_queuedRecovery_newPendingReservationDefersUntilDefiniteRejection()
+      throws Exception {
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService service = issue81Service();
+    Intent a = issue82Dispatch(context, "A", 810);
+    try (Issue81LateReply b = new Issue81LateReply(null, false)) {
+      b.awaitDispatch();
+      service.onStartCommand(a, 0, 7);
+      Object recovery = issue81Field(service, "mDeniedStartRecovery");
+      b.settle();
+      try (Issue81LateReply c = new Issue81LateReply(null, false, "C", 814)) {
+        c.awaitDispatch();
+        Object request = issue81Pending().get(c.intent.getStringExtra(ISSUE81_REQUEST_ID));
+        idleMain();
+        assertSame(recovery, issue81Field(service, "mDeniedStartRecovery"));
+        assertSame(request, issue81Pending().get(c.intent.getStringExtra(ISSUE81_REQUEST_ID)));
+        assertTrue(Issue81ShadowService.stops.isEmpty());
+        c.settle();
+        idleMain();
+        assertTrue(issue81Pending().isEmpty());
+        assertNull(issue81Field(service, "mDeniedStartRecovery"));
+        assertEquals(java.util.Collections.singletonList(7), Issue81ShadowService.stops);
+        issue82AssertDiagnostic(a.getStringExtra(ISSUE81_REQUEST_ID), "accepted");
+      }
+    }
+  }
+
+  private static Object issue82RequestField(Object request, String name) throws Exception {
+    Field field = request.getClass().getDeclaredField(name);
+    field.setAccessible(true);
+    return field.get(request);
+  }
+
+  private static Intent issue82Dispatch(RecordingServiceContext context, String id, int hash) {
+    Intent start = buildStartIntent(id, hash, id, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    ForegroundService.start(
+        hash, start.getParcelableExtra("notification"), start.getBundleExtra("notificationBundle"));
+    return context.starts.get(context.starts.size() - 1);
+  }
+
+  private void issue82DestroyServices() {
+    for (int i = controllers.size() - 1; i >= 0; i--) controllers.get(i).destroy();
+    controllers.clear();
+    idleMain();
+  }
+
+  private static void issue82AssertDiagnostic(String id, String outcome) {
+    assertTrue(
+        ShadowLog.getLogsForTag("NOTIFEE").stream()
+            .anyMatch(
+                item ->
+                    item.type == android.util.Log.WARN
+                        && item.throwable == Issue81ShadowService.failure
+                        && item.msg.contains("PROMOTION_DENIED")
+                        && item.msg.contains("cause=UNKNOWN")
+                        && item.msg.contains("requestId=" + id)
+                        && item.msg.contains("notificationId=A")
+                        && item.msg.contains("api=" + Build.VERSION.SDK_INT)
+                        && item.msg.contains("type=1")
+                        && item.msg.contains("startId=7")
+                        && item.msg.contains("flags=0")
+                        && item.msg.contains("generation=")
+                        && item.msg.contains("stop=" + outcome)));
+  }
+
   @Test
   @Config(
       sdk = {31, 33, 34, 35},
@@ -1162,6 +1878,10 @@ public class ForegroundServiceTest {
     Intent intent;
 
     Issue81LateReply(RuntimeException rejection, boolean accepted) {
+      this(rejection, accepted, "B", 812);
+    }
+
+    Issue81LateReply(RuntimeException rejection, boolean accepted, String id, int hash) {
       ContextHolder.setApplicationContext(
           new ContextWrapper(RuntimeEnvironment.getApplication()) {
             @Override
@@ -1186,7 +1906,12 @@ public class ForegroundServiceTest {
           new Thread(
               () -> {
                 try {
-                  issue81StartB();
+                  Intent start =
+                      buildStartIntent(id, hash, id, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+                  ForegroundService.start(
+                      hash,
+                      start.getParcelableExtra("notification"),
+                      start.getBundleExtra("notificationBundle"));
                 } catch (Throwable e) {
                   failure.set(e);
                 }
@@ -1219,6 +1944,7 @@ public class ForegroundServiceTest {
     Issue81ShadowService.rejectTitle = "A";
     Issue81ShadowService.stopResult = true;
     Issue81ShadowService.beforeStop = null;
+    Issue81ShadowService.beforePromotion = null;
     Issue81ShadowService.promotions.clear();
     Issue81ShadowService.types.clear();
     Issue81ShadowService.stops.clear();
@@ -1337,6 +2063,7 @@ public class ForegroundServiceTest {
     static String rejectTitle;
     static boolean stopResult;
     static Runnable beforeStop;
+    static Runnable beforePromotion;
     static final List<Integer> promotions = new ArrayList<>();
     static final List<Integer> types = new ArrayList<>();
     static final List<Integer> stops = new ArrayList<>();
@@ -1347,6 +2074,7 @@ public class ForegroundServiceTest {
       promotions.add(id);
       types.add(type);
       order.add("promote:" + id);
+      if (beforePromotion != null) beforePromotion.run();
       if (failure != null
           && (id == Integer.MAX_VALUE - 1
               || rejectTitle == null

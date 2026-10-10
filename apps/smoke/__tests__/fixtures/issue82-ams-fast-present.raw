@@ -1,0 +1,39 @@
+ISSUE82_FAST_BEGIN:100.0
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+  User 0 active services:
+  * ServiceRecord{dd89419 u0 com.notifeeexample/app.notifee.core.ForegroundService c:com.notifeeexample}
+    intent={act=app.notifee.core.ForegroundService.START cmp=com.notifeeexample/app.notifee.core.ForegroundService}
+    packageName=com.notifeeexample
+    processName=com.notifeeexample
+    targetSdkVersion=36
+    baseDir=/data/app/~~nFx6bhlVwMVSDtaheLYRXQ==/com.notifeeexample-9m8KZgUH17E9Y4ckDG55FA==/base.apk
+    dataDir=/data/user/0/com.notifeeexample
+    app=ProcessRecord{2014a5d 32351:com.notifeeexample/u0a1794}
+    useNewWiuLogic_forCapabilities()=true
+    useNewWiuLogic_forStart()=true
+    useNewBfslLogic()=true
+    mAllowWiu_noBinding=ACTIVITY_STARTER
+    mAllowWiu_inBindService=DENIED
+    mAllowWiu_byBindings=DENIED
+    getFgsAllowWiu_legacy=ACTIVITY_STARTER
+    getFgsAllowWiu_new=ACTIVITY_STARTER
+    getFgsAllowWiu_forStart=ACTIVITY_STARTER
+    getFgsAllowWiu_forCapabilities=ACTIVITY_STARTER
+    allowUiJobScheduling=true
+    recentCallingPackage=com.notifeeexample
+    recentCallingUid=11794
+    mAllowStart_noBinding=ACTIVITY_STARTER
+    mAllowStart_inBindService=DENIED
+    mAllowStart_byBindings=DENIED
+    getFgsAllowStart_legacy=ACTIVITY_STARTER
+    getFgsAllowStart_new=ACTIVITY_STARTER
+    getFgsAllowStart=ACTIVITY_STARTER
+    startForegroundCount=1
+    infoAllowStartForeground=[callingPackage: com.notifeeexample; callingUid: 11794; uidState: FGS ; uidBFSL: [BFSL]; BFGS denied: false; intent: Intent { act=app.notifee.core.ForegroundService.START cmp=com.notifeeexample/app.notifee.core.ForegroundService }; code:ACTIVITY_STARTER; tempAllowListReason:<setPendingIntentAllowlistDuration,reason:NotificationManagerService,pendingintent:u0a248:app.notifee.core.ReceiverService.ACTION_PRESS_INTENT,reasonCode:NOTIFICATION_SERVICE,duration:30000,callingUid:10248>; allowWiu:52; targetSdkVersion:36; callerTargetSdkVersion:36; startForegroundCount:0; bindFromPackage:null; isBindService:false]
+    isForeground=true foregroundId=1234775486 types=0x00000001 foregroundNoti=Notification(channel=issue82_datasync_budget shortcut=null contentView=null vibrate=null sound=null defaults=0 flags=ONGOING_EVENT|FOREGROUND_SERVICE color=0x00000000 vis=PRIVATE template=null)
+    createTime=-1s761ms startingBgTimeout=--
+    lastActivity=-1s757ms restartTime=-1s757ms createdFromFg=false
+    startRequested=true delayedStop=false stopIfKilled=true callStart=true lastStartId=1
+ startCommandResult=2
+
+ISSUE82_FAST_END:0:100.1
