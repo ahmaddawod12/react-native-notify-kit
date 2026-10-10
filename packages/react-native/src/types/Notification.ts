@@ -417,6 +417,17 @@ export enum EventType {
    * Event type is sent when a notification wants to start a foreground service but a foreground service is already started.
    */
   FG_ALREADY_EXIST = 8,
+
+  /**
+   * Event type for an Android Foreground Service timeout handled by the native timeout path.
+   *
+   * Delivery to JavaScript is best-effort; JavaScript execution is not guaranteed.
+   * This event does not confirm completed Android service teardown, guarantee cancellation of
+   * JavaScript work, or authorize a new Foreground Service start.
+   *
+   * @platform android
+   */
+  FG_TIMEOUT = 9,
 }
 
 /**
@@ -436,6 +447,7 @@ export interface EventDetail {
    *  - [`EventType.DELIVERED`](/react-native/reference/eventtype#delivered)
    *  - [`EventType.TRIGGER_NOTIFICATION_CREATED`](/react-native/reference/eventtype#trigger_notification_created)
    *  - [`EventType.FG_ALREADY_EXIST`](/react-native/reference/eventtype#fg_already_exist)
+   *  - [`EventType.FG_TIMEOUT`](/react-native/reference/eventtype#fg_timeout)
    */
   notification?: Notification;
 
@@ -494,6 +506,21 @@ export interface EventDetail {
    * @platform android API Level >= 28
    */
   blocked?: boolean;
+
+  /**
+   * The start command identifier reported by Android's timeout callback for `EventType.FG_TIMEOUT`.
+   *
+   * @platform android
+   */
+  startId?: number;
+
+  /**
+   * The Foreground Service type reported by Android's timeout callback for `EventType.FG_TIMEOUT`.
+   * A value of `-1` is preserved when the callback overload does not provide an explicit type.
+   *
+   * @platform android
+   */
+  fgsType?: number;
 }
 
 /**
