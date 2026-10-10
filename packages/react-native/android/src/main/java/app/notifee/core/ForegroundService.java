@@ -78,6 +78,9 @@ public class ForegroundService extends Service {
   private long mStateGeneration;
   private int mRunFirstStartId;
   private Object mRunnerToken;
+  // A denied framework redelivery is not a client STOP. Its recovery cannot acquire authority
+  // over a later accepted/promoted run, and is consumed by one eligible stop attempt.
+  private DeniedStartRecovery mDeniedStartRecovery;
   private static final String DEFENSIVE_CHANNEL_ID = "notifee_fg_default";
   private static final int DEFENSIVE_NOTIFICATION_ID = Integer.MAX_VALUE - 1;
 
@@ -91,6 +94,23 @@ public class ForegroundService extends Service {
     StartRequest(long generation, Object precedingStop) {
       this.generation = generation;
       this.precedingStop = precedingStop;
+    }
+  }
+
+  private static final class DeniedStartRecovery {
+    final long generation;
+    final long runGeneration;
+    final int startId;
+    final int flags;
+    final RuntimeException denial;
+
+    DeniedStartRecovery(
+        long generation, long runGeneration, int startId, int flags, RuntimeException denial) {
+      this.generation = generation;
+      this.runGeneration = runGeneration;
+      this.startId = startId;
+      this.flags = flags;
+      this.denial = denial;
     }
   }
 
@@ -119,6 +139,9 @@ public class ForegroundService extends Service {
   public void onCreate() {
     super.onCreate();
     synchronized (sLifecycleLock) {
+      if (sInstance != null) {
+        sInstance.mDeniedStartRecovery = null;
+      }
       sInstance = this;
       mRunGeneration = sRunGeneration;
       synchronized (sLock) {
@@ -131,6 +154,7 @@ public class ForegroundService extends Service {
   @Override
   public void onDestroy() {
     synchronized (sLifecycleLock) {
+      mDeniedStartRecovery = null;
       sPendingStarts.values().removeIf(request -> request.instance == this);
       if (sInstance == this) {
         sInstance = null;
@@ -161,6 +185,7 @@ public class ForegroundService extends Service {
   private void clearOwnedState() {
     synchronized (sLock) {
       if (sStateOwner == this) {
+        mDeniedStartRecovery = null;
         clearCurrentState();
         mRunnerToken = null;
       }
@@ -270,6 +295,9 @@ public class ForegroundService extends Service {
   private static void acceptStart(StartRequest request) {
     if (!request.accepted) {
       request.accepted = true;
+      if (sInstance != null) {
+        sInstance.mDeniedStartRecovery = null;
+      }
       if (sStopRequest == request.precedingStop) {
         sStopRequest = null;
       }
@@ -280,6 +308,9 @@ public class ForegroundService extends Service {
     synchronized (sLifecycleLock) {
       if (sInstance == null && sPendingStarts.isEmpty()) {
         return;
+      }
+      if (sInstance != null) {
+        sInstance.mDeniedStartRecovery = null;
       }
       sStopRequest = new Object();
       sRunGeneration++;
@@ -294,6 +325,53 @@ public class ForegroundService extends Service {
     Object request = sStopRequest;
     if (instance != null && request != null) {
       new Handler(Looper.getMainLooper()).post(() -> instance.stopIfRequested(request));
+    }
+    if (instance != null && instance.mDeniedStartRecovery != null && sPendingStarts.isEmpty()) {
+      DeniedStartRecovery recovery = instance.mDeniedStartRecovery;
+      new Handler(Looper.getMainLooper()).post(() -> instance.stopDeniedStartIfCurrent(recovery));
+    }
+  }
+
+  private void stopDeniedStartIfCurrent(DeniedStartRecovery recovery) {
+    synchronized (sLifecycleLock) {
+      if (mDeniedStartRecovery != recovery) {
+        return;
+      }
+      synchronized (sLock) {
+        if (!ownsUnpromotedState()
+            || sRunGeneration != recovery.generation
+            || mRunGeneration != recovery.runGeneration
+            || mLastStartId != recovery.startId
+            || mStopInitiated) {
+          mDeniedStartRecovery = null;
+          return;
+        }
+      }
+      String stopOutcome = "deferred";
+      try {
+        if (sPendingStarts.isEmpty()) {
+          // Consume before Binder IPC: refusal or failure grants no automatic retry authority.
+          mDeniedStartRecovery = null;
+          stopOutcome = "failed";
+          boolean stopped = stopSelfResult(recovery.startId);
+          stopOutcome = stopped ? "accepted" : "refused";
+          if (stopped) {
+            mStopInitiated = true;
+          }
+        }
+      } finally {
+        // Preserve the promotion diagnostic even if the separate stop operation throws.
+        Logger.w(
+            TAG,
+            "Framework redelivered START promotion denied (startId="
+                + recovery.startId
+                + ", flags="
+                + recovery.flags
+                + ", stop="
+                + stopOutcome
+                + ").",
+            recovery.denial);
+      }
     }
   }
 
@@ -320,6 +398,8 @@ public class ForegroundService extends Service {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     synchronized (sLifecycleLock) {
+      // Any later delivery supersedes the recovery startId, including terminal commands.
+      mDeniedStartRecovery = null;
       mLastStartId = startId;
       boolean terminal =
           intent == null || STOP_FOREGROUND_SERVICE_ACTION.equals(intent.getAction());
@@ -336,6 +416,13 @@ public class ForegroundService extends Service {
       }
       String requestId = intent == null ? null : intent.getStringExtra(START_REQUEST_ID);
       StartRequest request = sPendingStarts.get(requestId);
+      boolean frameworkRedelivery =
+          intent != null
+              && START_FOREGROUND_SERVICE_ACTION.equals(intent.getAction())
+              && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+              && (flags & (START_FLAG_RETRY | START_FLAG_REDELIVERY)) != 0
+              && isValidStartRequestId(requestId)
+              && request == null;
       boolean superseded = false;
       if (!terminal) {
         long generation = request == null ? sRunGeneration : request.generation;
@@ -358,7 +445,7 @@ public class ForegroundService extends Service {
           // that run already ended, still perform the old request's real promotion before teardown.
           result = mForegroundActive ? START_NOT_STICKY : fulfillSupersededStart(intent);
         } else {
-          result = handleStartCommand(intent, flags, startId);
+          result = handleStartCommand(intent, flags, startId, frameworkRedelivery);
         }
         mStartCommandFailed = false;
         if (mStartCommandSatisfied) {
@@ -386,10 +473,38 @@ public class ForegroundService extends Service {
     }
   }
 
+  private static boolean isValidStartRequestId(@Nullable String requestId) {
+    if (requestId == null || requestId.length() != 36) {
+      return false;
+    }
+    try {
+      return UUID.fromString(requestId).toString().equalsIgnoreCase(requestId);
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  // Caller holds sLifecycleLock and sLock. Recovery cannot retire an acquired run or another owner.
+  private boolean ownsUnpromotedState() {
+    return sInstance == this
+        && sStateOwner == this
+        && !mStartForegroundCalled
+        && !mForegroundActive
+        && !mStartCommandSatisfied
+        && mRunnerToken == null
+        && mRunFirstStartId == 0
+        && mCurrentNotificationId == null
+        && mCurrentForegroundServiceType == -1
+        && mCurrentNotificationBundle == null
+        && mCurrentNotification == null
+        && mCurrentHashCode == 0;
+  }
+
   // A real promotion (or an already foreground instance) satisfies the physical instance's
   // delivered obligations, including a prior ambiguous delivery. Undelivered STARTs remain held.
   // This does not turn a posting/type exception into success: onStartCommand still rethrows it.
   private void settleDeliveredStarts() {
+    mDeniedStartRecovery = null;
     sPendingStarts.values().removeIf(request -> request.instance == this);
   }
 
@@ -427,7 +542,8 @@ public class ForegroundService extends Service {
   }
 
   @SuppressLint({"ForegroundServiceType", "MissingPermission"})
-  private int handleStartCommand(Intent intent, int flags, int startId) {
+  private int handleStartCommand(
+      Intent intent, int flags, int startId, boolean frameworkRedelivery) {
     Trace.beginSection("notifee:ForegroundService.onStartCommand");
     try {
       // Check if action is to stop the foreground service
@@ -456,6 +572,7 @@ public class ForegroundService extends Service {
 
           Object pendingEvent = null;
           boolean noneEarlyReturn = false;
+          RuntimeException deniedInitialPromotion = null;
 
           synchronized (sLock) {
             if (mCurrentNotificationId == null || mStateGeneration != mRunGeneration) {
@@ -475,16 +592,29 @@ public class ForegroundService extends Service {
                   // Binder IPC (PackageManager + startForeground) and must not hold sLock.
                   noneEarlyReturn = true;
                 } else {
+                  boolean recoverInitialDenial = frameworkRedelivery && ownsUnpromotedState();
                   Trace.beginSection("notifee:startForeground");
                   try {
                     startForeground(hashCode, notification, foregroundServiceType);
+                  } catch (RuntimeException e) {
+                    // Only the real initial promotion is exempt. Type resolution, NONE, posting,
+                    // updates and teardown retain their existing failure boundaries.
+                    if (!recoverInitialDenial
+                        || !ownsUnpromotedState()
+                        || Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                        || e.getClass() != ForegroundServiceStartNotAllowedException.class) {
+                      throw e;
+                    }
+                    deniedInitialPromotion = e;
                   } finally {
                     Trace.endSection();
                   }
-                  mStartForegroundCalled = true;
-                  mForegroundActive = true;
-                  mStartCommandSatisfied = true;
-                  mCurrentForegroundServiceType = foregroundServiceType;
+                  if (deniedInitialPromotion == null) {
+                    mStartForegroundCalled = true;
+                    mForegroundActive = true;
+                    mStartCommandSatisfied = true;
+                    mCurrentForegroundServiceType = foregroundServiceType;
+                  }
                 }
               } else {
                 Trace.beginSection("notifee:startForeground");
@@ -498,7 +628,7 @@ public class ForegroundService extends Service {
                 mStartCommandSatisfied = true;
               }
 
-              if (!noneEarlyReturn) {
+              if (!noneEarlyReturn && deniedInitialPromotion == null) {
                 mCurrentNotificationId = notificationId;
                 mCurrentNotificationBundle = bundle;
                 mCurrentNotification = notification;
@@ -584,6 +714,17 @@ public class ForegroundService extends Service {
                         NotificationEvent.TYPE_FG_ALREADY_EXIST, notificationModel);
               }
             }
+          }
+
+          if (deniedInitialPromotion != null) {
+            // Still under sLifecycleLock, but release sLock before the stop Binder call. Pending
+            // STARTs belong to their senders; a denied redelivery neither settles nor cancels them.
+            DeniedStartRecovery recovery =
+                new DeniedStartRecovery(
+                    sRunGeneration, mRunGeneration, startId, flags, deniedInitialPromotion);
+            mDeniedStartRecovery = recovery;
+            stopDeniedStartIfCurrent(recovery);
+            return START_NOT_STICKY;
           }
 
           // Handle NONE early return outside the lock — the helper performs Binder IPC
