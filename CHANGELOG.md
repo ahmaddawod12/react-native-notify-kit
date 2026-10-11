@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [10.8.1] - 2026-10-11
+
 ### Added
 
 - **Android / foreground services (Slice C)**: exposed `EventType.FG_TIMEOUT = 9` with optional `EventDetail.startId` and `fgsType` timeout metadata (`fgsType = -1` can come from the API 34 single-parameter callback), and `notification` when available. JavaScript delivery is best-effort; the event does not confirm Android service teardown, cancel JavaScript work, or authorize a new START. A suspended or terminated process may not execute the handler. [Issue #82](https://github.com/marcocrupi/react-native-notify-kit/issues/82).

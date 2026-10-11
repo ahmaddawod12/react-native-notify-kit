@@ -640,7 +640,7 @@ These changes are documented in the [CHANGELOG](CHANGELOG.md) under the release 
 
 ## Foreground Service Setup (Android 14+)
 
-**Unreleased — [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81):** on Android 12+, the library automatically handles a denied initial foreground promotion non-fatally for an eligible START retried or redelivered by Android after process death. Ordinary app-requested START failures retain their existing error handling. This does not guarantee service survival or restart under Android/OEM restrictions. See the [Foreground Service guide](https://github.com/marcocrupi/react-native-notify-kit/blob/main/docs/react-native/android/foreground-service.mdx) for details.
+**10.8.1 — [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81):** on Android 12+, the library automatically handles a denied initial foreground promotion non-fatally for an eligible START retried or redelivered by Android after process death. Ordinary app-requested START failures retain their existing error handling. This does not guarantee service survival or restart under Android/OEM restrictions. See the [Foreground Service guide](https://github.com/marcocrupi/react-native-notify-kit/blob/main/docs/react-native/android/foreground-service.mdx) for details.
 
 Android 14 (API 34) requires all foreground services to declare an explicit `foregroundServiceType`. If you use `asForegroundService: true` in your notifications, add the following to your app's `AndroidManifest.xml`:
 
