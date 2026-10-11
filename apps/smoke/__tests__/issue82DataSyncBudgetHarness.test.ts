@@ -342,6 +342,51 @@ test('timeout + denied START require two distinct certified obligations; prior r
   expect(f.api.cancelNotification).toHaveBeenCalledTimes(1);
 });
 
+test.each(['valid', 'unsigned', 'extra-token', 'unterminated', 'foreign-process'])(
+  'single timeout receipt seals only the next unused token: %s',
+  async kind => {
+    const f = fixture();
+    await Reflect.apply(f.h.arm, null, ['run-a', () => true, session82]);
+    f.appState.currentState = 'background';
+    await f.h.handle(f.event());
+    const fg = [...f.stored.values()].find(n => n.android?.asForegroundService)!;
+    const work = f.h.runner(fg)!;
+    f.stored.delete(fg.id!);
+    await f.h.handle({ type: 9, detail: { notification: fg, startId: 1, fgsType: 1 } });
+    await work;
+    await f.h.handle(f.event('issue82-stop'));
+    const data = f.control().data!;
+    const diagnostic = JSON.parse(String(data.diagnostic));
+    if (kind === 'extra-token') {
+      data.attempt = '3';
+      data.attemptId = `run-a:3:${data.nonce}`;
+    }
+    if (kind === 'unterminated') diagnostic.ledger[0].terminal = 'none';
+    if (kind === 'foreign-process') diagnostic.ledger[0].processRunId = 'foreign';
+    data.diagnostic = canonical82(diagnostic);
+    const wire = JSON.parse(Buffer82.from(receipt82(f), 'base64url').toString());
+    const body = JSON.parse(wire.payload);
+    body.proofs[0].terminal = 'timeout';
+    body.proofs[0].stopResolved = false;
+    const payload = canonical82(body);
+    const ack = f.event('issue82-cleanup');
+    ack.detail.input = Buffer82.from(
+      JSON.stringify({
+        payload,
+        signature:
+          kind === 'unsigned'
+            ? '00'.repeat(256)
+            : crypto82.sign('sha256', Buffer82.from(payload), keys82.privateKey).toString('hex'),
+      }),
+    ).toString('base64url');
+    await f.h.handle(ack);
+    expect(f.api.cancelNotification).toHaveBeenCalledTimes(kind === 'valid' ? 1 : 0);
+    expect(f.markers.some(m => m.marker === 'CLEANUP' && m.certified === true)).toBe(
+      kind === 'valid',
+    );
+  },
+);
+
 test('receipt verification cannot cancel replacement control after awaited publication', async () => {
   const f = fixture();
   await Reflect.apply(f.h.arm, null, ['run-a', () => true, session82]);

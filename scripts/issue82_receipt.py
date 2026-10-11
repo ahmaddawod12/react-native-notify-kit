@@ -56,9 +56,12 @@ def certify(e, correlation, quiesced, markers, mode):
     d = quiesced.get('diagnostic', {})
     context = e.receipt_signer.context
     ledger = d.get('ledger', [])
+    if mode not in ['feasibility','full','timeout-only']:
+        raise RuntimeError('BLOCKED: unknown receipt mode')
+    expected_attempt = len(ledger)+1 if mode == 'timeout-only' else len(ledger)
     if d.get('session') != context or d.get('phase') != 'quiesced' or not d.get('epoch') or \
        d.get('consumerRunId') != quiesced.get('processRunId') or quiesced.get('appState') != 'background' or \
-       len(ledger) != len(e.proof_chain) or not ledger or len(ledger) != quiesced['attempt'] or \
+       len(ledger) != len(e.proof_chain) or not ledger or expected_attempt != quiesced['attempt'] or \
        quiesced['correlationId'] != correlation:
         raise RuntimeError('BLOCKED: unqualified quiescence/ledger/session')
     if e.adb('shell', 'cat', '/proc/sys/kernel/random/boot_id').strip() != context['bootId'] or \
@@ -95,6 +98,10 @@ def certify(e, correlation, quiesced, markers, mode):
         elif terminal == 'timeout':
             if entry.get('terminal') != 'timeout' or not chain.get('timeout'):
                 raise RuntimeError('BLOCKED: native timeout unproved')
+            if mode == 'timeout-only' and (len(ledger) != 1 or not chain.get('promotion') or
+                not chain['timeout'].get('framework') or not chain['timeout'].get('native') or
+                chain['timeout'].get('demotion') != 'returned' or chain['timeout'].get('stop') != 'accepted'):
+                raise RuntimeError('BLOCKED: isolated real promoted framework timeout unproved')
         elif terminal == 'denial':
             if service.get('identityKind') == 'app-owned-native-instance':
                 proof=chain.get('nativeInstanceProof') or {}
@@ -110,6 +117,8 @@ def certify(e, correlation, quiesced, markers, mode):
             raise RuntimeError('BLOCKED: feasibility needs promoted session and attributed STOP')
         if mode == 'full' and (len(ledger) != 2 or terminal != ['timeout', 'denial'][i]):
             raise RuntimeError('BLOCKED: full receipt must cover timeout and denial distinctly')
+        if mode == 'timeout-only' and terminal != 'timeout':
+            raise RuntimeError('BLOCKED: timeout-only receipt cannot certify STOP or denial')
         if chain.get('promotion') and (service.get('type') != 1 or service.get('foreground') is not True or
             service.get('pid') != process['pid'] or service.get('user') != '0' or
             service.get('notificationId') != notification_number(request['notificationId']) or

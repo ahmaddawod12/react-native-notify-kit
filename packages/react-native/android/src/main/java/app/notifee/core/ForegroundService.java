@@ -43,8 +43,12 @@ import app.notifee.core.event.NotificationEvent;
 import app.notifee.core.interfaces.MethodCallResult;
 import app.notifee.core.model.NotificationModel;
 import app.notifee.core.utility.ParcelableCompatReader;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class ForegroundService extends Service {
@@ -78,6 +82,114 @@ public class ForegroundService extends Service {
   private long mStateGeneration;
   private int mRunFirstStartId;
   private Object mRunnerToken;
+  private ForegroundEpoch mForegroundEpoch;
+  // Previously admitted metadata can collide with a successor even across run generations.
+  // These IDs only disqualify stop authority; they never establish Android epoch provenance.
+  private final Set<Integer> mTimeoutStartIds = new HashSet<>();
+  // A reentrant platform callback may still inherit an outer lifecycle monitor. Drain these
+  // publications synchronously at that call's unlocked boundary, without scheduling or waiting.
+  private static final ThreadLocal<List<Runnable>> sTimeoutPublications = new ThreadLocal<>();
+
+  private static void publishTimeoutEventsIfUnlocked() {
+    if (Thread.holdsLock(sLifecycleLock) || Thread.holdsLock(sLock)) {
+      return;
+    }
+    List<Runnable> publications = sTimeoutPublications.get();
+    if (publications != null) {
+      sTimeoutPublications.remove();
+      for (Runnable publication : publications) {
+        publication.run();
+      }
+    }
+  }
+
+  // Local publication identity, never provenance supplied by Android's timeout callback.
+  // Guarded by sLifecycleLock then sLock. Retiring consumes timeout authority even on failure.
+  private static final class ForegroundEpoch {
+    final long runGeneration;
+    final boolean ambiguousPromotion;
+    final Set<Integer> satisfiedStartIds = new HashSet<>();
+    int lastSatisfiedStartId;
+    boolean retiring;
+    boolean retired;
+
+    ForegroundEpoch(long runGeneration, boolean ambiguousPromotion, int startId) {
+      this.runGeneration = runGeneration;
+      this.ambiguousPromotion = ambiguousPromotion;
+      satisfiedStartIds.add(startId);
+      lastSatisfiedStartId = startId;
+    }
+  }
+
+  // Caller holds both locks, after the actual promotion returned normally.
+  private void commitForegroundEpoch() {
+    ForegroundEpoch previous = mForegroundEpoch;
+    mForegroundEpoch =
+        new ForegroundEpoch(
+            mRunGeneration,
+            previous != null && previous.runGeneration == mRunGeneration,
+            mLastStartId);
+  }
+
+  // Snapshot before platform IPC; a reply cannot acquire authority over a reentrant successor.
+  private static final class StopAuthority {
+    final ForegroundService owner;
+    final ForegroundEpoch epoch;
+    final long generation;
+    final long runGeneration;
+    final int startId;
+    final Object request;
+
+    StopAuthority(ForegroundService service) {
+      owner = sStateOwner;
+      epoch = service.mForegroundEpoch;
+      generation = sRunGeneration;
+      runGeneration = service.mRunGeneration;
+      startId = service.mLastStartId;
+      request = sStopRequest;
+    }
+  }
+
+  // Caller holds sLifecycleLock. Follow the lifecycle -> state lock order for both snapshots.
+  private StopAuthority captureStopAuthority() {
+    synchronized (sLock) {
+      return new StopAuthority(this);
+    }
+  }
+
+  private boolean ownsStopAuthority(StopAuthority authority) {
+    synchronized (sLock) {
+      return sInstance == this
+          && sStateOwner == authority.owner
+          && mForegroundEpoch == authority.epoch
+          && sRunGeneration == authority.generation
+          && mRunGeneration == authority.runGeneration
+          && mLastStartId == authority.startId
+          && sStopRequest == authority.request
+          && sPendingStarts.isEmpty();
+    }
+  }
+
+  // A delivered command can be physically satisfied by the existing foreground publication,
+  // even if its notification update throws. A future/unfulfilled delivery gains no authority.
+  private void recordSatisfiedStart(int startId) {
+    synchronized (sLock) {
+      ForegroundEpoch epoch = mForegroundEpoch;
+      if (sInstance == this
+          && sStateOwner == this
+          && epoch != null
+          && !epoch.retiring
+          && !epoch.retired
+          && mForegroundActive
+          && mStartCommandSatisfied
+          && mLastStartId == startId
+          && epoch.runGeneration == mRunGeneration) {
+        epoch.satisfiedStartIds.add(startId);
+        epoch.lastSatisfiedStartId = startId;
+      }
+    }
+  }
+
   // A denied initial promotion is not a client STOP. Its recovery cannot acquire authority
   // over a later accepted/promoted run, and is consumed by one eligible stop attempt.
   private DeniedStartRecovery mDeniedStartRecovery;
@@ -204,6 +316,9 @@ public class ForegroundService extends Service {
         mDeniedStartRecovery = null;
         clearCurrentState();
         mRunnerToken = null;
+        if (mForegroundEpoch != null) {
+          mForegroundEpoch.retired = true;
+        }
       }
     }
   }
@@ -217,16 +332,25 @@ public class ForegroundService extends Service {
    */
   @SuppressLint("MissingPermission")
   static boolean repostIfActive(String notificationId) {
-    synchronized (sLock) {
-      if (mCurrentNotificationId == null
-          || !mCurrentNotificationId.equals(notificationId)
-          || mCurrentNotification == null) {
-        return false;
+    try {
+      synchronized (sLifecycleLock) {
+        synchronized (sLock) {
+          if (mCurrentNotificationId == null
+              || (sStateOwner != null
+                  && sStateOwner.mForegroundEpoch != null
+                  && sStateOwner.mForegroundEpoch.retiring)
+              || !mCurrentNotificationId.equals(notificationId)
+              || mCurrentNotification == null) {
+            return false;
+          }
+          Logger.w(TAG, "Submitting dismissed foreground service notification for re-post");
+          NotificationManagerCompat.from(ContextHolder.getApplicationContext())
+              .notify(mCurrentHashCode, mCurrentNotification);
+          return true;
+        }
       }
-      Logger.w(TAG, "Submitting dismissed foreground service notification for re-post");
-      NotificationManagerCompat.from(ContextHolder.getApplicationContext())
-          .notify(mCurrentHashCode, mCurrentNotification);
-      return true;
+    } finally {
+      publishTimeoutEventsIfUnlocked();
     }
   }
 
@@ -352,6 +476,14 @@ public class ForegroundService extends Service {
   }
 
   private void stopDeniedStartIfCurrent(DeniedStartRecovery recovery) {
+    try {
+      stopDeniedStartIfCurrentLocked(recovery);
+    } finally {
+      publishTimeoutEventsIfUnlocked();
+    }
+  }
+
+  private void stopDeniedStartIfCurrentLocked(DeniedStartRecovery recovery) {
     synchronized (sLifecycleLock) {
       if (mDeniedStartRecovery != recovery) {
         return;
@@ -369,13 +501,16 @@ public class ForegroundService extends Service {
       String stopOutcome = "deferred";
       try {
         if (sPendingStarts.isEmpty()) {
+          StopAuthority authority = captureStopAuthority();
           // Consume before Binder IPC: refusal or failure grants no automatic retry authority.
           mDeniedStartRecovery = null;
           stopOutcome = "failed";
           boolean stopped = stopSelfResult(recovery.startId);
           stopOutcome = stopped ? "accepted" : "refused";
-          if (stopped) {
-            mStopInitiated = true;
+          synchronized (sLock) {
+            if (stopped && ownsStopAuthority(authority) && ownsUnpromotedState()) {
+              mStopInitiated = true;
+            }
           }
         }
       } finally {
@@ -409,6 +544,14 @@ public class ForegroundService extends Service {
   }
 
   private void stopIfRequested(Object request) {
+    try {
+      stopIfRequestedLocked(request);
+    } finally {
+      publishTimeoutEventsIfUnlocked();
+    }
+  }
+
+  private void stopIfRequestedLocked(Object request) {
     synchronized (sLifecycleLock) {
       if (sInstance != this
           || sStopRequest != request
@@ -418,18 +561,37 @@ public class ForegroundService extends Service {
           || mStartCommandFailed) {
         return;
       }
-      // The framework token and startId also protect against a start we have not yet received.
-      if (stopSelfResult(mLastStartId)) {
-        mStopInitiated = true;
-        sStopRequest = null;
-        mForegroundActive = false;
-        clearOwnedState();
+      // Consume this request before IPC so a reentrant START cannot schedule it against its
+      // successor. Refusal/failure restores it only while the original admission still owns it.
+      sStopRequest = null;
+      StopAuthority authority = captureStopAuthority();
+      boolean stopped = false;
+      try {
+        // The framework token and startId also protect an accepted, not yet delivered START.
+        stopped = stopSelfResult(authority.startId);
+        if (stopped && ownsStopAuthority(authority)) {
+          mStopInitiated = true;
+          mForegroundActive = false;
+          clearOwnedState();
+        }
+      } finally {
+        if (!stopped && ownsStopAuthority(authority)) {
+          sStopRequest = request;
+        }
       }
     }
   }
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
+    try {
+      return onStartCommandLocked(intent, flags, startId);
+    } finally {
+      publishTimeoutEventsIfUnlocked();
+    }
+  }
+
+  private int onStartCommandLocked(Intent intent, int flags, int startId) {
     synchronized (sLifecycleLock) {
       // Any later delivery supersedes the recovery startId, including terminal commands.
       mDeniedStartRecovery = null;
@@ -483,6 +645,9 @@ public class ForegroundService extends Service {
         }
         mStartCommandFailed = false;
         if (mStartCommandSatisfied) {
+          if (!terminal && !superseded) {
+            recordSatisfiedStart(startId);
+          }
           settleDeliveredStarts();
         }
         if (superseded
@@ -500,6 +665,9 @@ public class ForegroundService extends Service {
       } catch (RuntimeException e) {
         mStartCommandFailed = !mStartCommandSatisfied;
         if (mStartCommandSatisfied) {
+          if (!terminal && !superseded) {
+            recordSatisfiedStart(startId);
+          }
           settleDeliveredStarts();
         }
         throw e;
@@ -612,8 +780,11 @@ public class ForegroundService extends Service {
     try {
       // Check if action is to stop the foreground service
       if (intent == null || STOP_FOREGROUND_SERVICE_ACTION.equals(intent.getAction())) {
+        StopAuthority authority = captureStopAuthority();
         ensureStartForegroundContractSatisfied(true);
-        if (stopSelfResult(startId)) {
+        if (ownsStopAuthority(authority)
+            && stopSelfResult(authority.startId)
+            && ownsStopAuthority(authority)) {
           mStopInitiated = true;
           mForegroundActive = false;
           clearOwnedState();
@@ -641,7 +812,9 @@ public class ForegroundService extends Service {
           boolean deniedTrackedStart = false;
 
           synchronized (sLock) {
-            if (mCurrentNotificationId == null || mStateGeneration != mRunGeneration) {
+            if (mCurrentNotificationId == null
+                || mStateGeneration != mRunGeneration
+                || (mForegroundEpoch != null && mForegroundEpoch.retiring)) {
               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 int foregroundServiceType =
                     notificationModel.getAndroid().getForegroundServiceType();
@@ -705,6 +878,7 @@ public class ForegroundService extends Service {
               }
 
               if (!noneEarlyReturn && deniedInitialPromotion == null) {
+                commitForegroundEpoch();
                 mCurrentNotificationId = notificationId;
                 mCurrentNotificationBundle = bundle;
                 mCurrentNotification = notification;
@@ -719,13 +893,25 @@ public class ForegroundService extends Service {
                     (e, aVoid) -> {
                       Runnable complete =
                           () -> {
-                            synchronized (sLifecycleLock) {
-                              if (sInstance == this
-                                  && mRunnerToken == runnerToken
-                                  && sRunGeneration == runnerGeneration) {
-                                stopForegroundCompat();
-                                clearOwnedState();
+                            try {
+                              synchronized (sLifecycleLock) {
+                                if (sInstance == this
+                                    && mRunnerToken == runnerToken
+                                    && sRunGeneration == runnerGeneration
+                                    && mForegroundEpoch != null
+                                    && !mForegroundEpoch.retiring
+                                    && !mForegroundEpoch.retired) {
+                                  ForegroundEpoch epoch = mForegroundEpoch;
+                                  stopForegroundCompat();
+                                  if (sInstance == this
+                                      && mForegroundEpoch == epoch
+                                      && mRunnerToken == runnerToken) {
+                                    clearOwnedState();
+                                  }
+                                }
                               }
+                            } finally {
+                              publishTimeoutEventsIfUnlocked();
                             }
                           };
                       if (Looper.myLooper() == Looper.getMainLooper()) {
@@ -739,6 +925,8 @@ public class ForegroundService extends Service {
               }
             } else {
               if (mCurrentNotificationId.equals(notificationId)) {
+                ForegroundEpoch updateEpoch = mForegroundEpoch;
+                long updateGeneration = sRunGeneration;
                 // Before API 31, updating the service's registered notification requires
                 // startForeground(). API 31+ processes a same-ID notify() against the foreground
                 // service record. Keep that path for an unchanged type: repeating
@@ -772,12 +960,26 @@ public class ForegroundService extends Service {
                   } finally {
                     Trace.endSection();
                   }
-                  mStartForegroundCalled = true;
-                  mForegroundActive = true;
-                  mStartCommandSatisfied = true;
                 } else {
                   NotificationManagerCompat.from(ContextHolder.getApplicationContext())
                       .notify(mCurrentHashCode, notification);
+                }
+                // A timeout or successor may have retired/replaced the publication during IPC.
+                // A normal return cannot reacquire its cache, runner or promotion authority.
+                if (!ownsTimeoutEpoch(updateEpoch)
+                    || updateEpoch == null
+                    || updateEpoch.retiring
+                    || updateEpoch.retired
+                    || mLastStartId != startId
+                    || mRunGeneration != updateEpoch.runGeneration
+                    || sRunGeneration != updateGeneration) {
+                  return START_NOT_STICKY;
+                }
+                if (shouldStartForeground) {
+                  mStartForegroundCalled = true;
+                  mForegroundActive = true;
+                  mStartCommandSatisfied = true;
+                  commitForegroundEpoch();
                 }
                 // The platform call returned normally, so cache the latest submitted state for
                 // re-post and timeout. A normal return does not acknowledge display.
@@ -846,7 +1048,11 @@ public class ForegroundService extends Service {
   @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
   @Override
   public void onTimeout(int startId) {
-    handleTimeout(startId, -1);
+    try {
+      handleTimeout(startId, -1, true);
+    } finally {
+      publishTimeoutEventsIfUnlocked();
+    }
   }
 
   /**
@@ -856,7 +1062,11 @@ public class ForegroundService extends Service {
   @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
   @Override
   public void onTimeout(int startId, int fgsType) {
-    handleTimeout(startId, fgsType);
+    try {
+      handleTimeout(startId, fgsType, false);
+    } finally {
+      publishTimeoutEventsIfUnlocked();
+    }
   }
 
   @RequiresApi(Build.VERSION_CODES.Q)
@@ -907,12 +1117,20 @@ public class ForegroundService extends Service {
 
   @SuppressWarnings("deprecation")
   private void stopForegroundCompat() {
+    ForegroundEpoch epoch = mForegroundEpoch;
+    removeForegroundNotification();
+    if (sInstance == this && sStateOwner == this && mForegroundEpoch == epoch) {
+      mForegroundActive = false;
+    }
+  }
+
+  @SuppressWarnings("deprecation")
+  private void removeForegroundNotification() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       stopForeground(STOP_FOREGROUND_REMOVE);
     } else {
       stopForeground(true);
     }
-    mForegroundActive = false;
   }
 
   /**
@@ -1071,36 +1289,144 @@ public class ForegroundService extends Service {
     stopForegroundCompat();
   }
 
-  private void handleTimeout(int startId, int fgsType) {
-    Logger.e(
-        TAG,
-        "Foreground service timed out (startId="
+  // Caller holds sLifecycleLock. Platform calls may synchronously reenter lifecycle callbacks.
+  private boolean ownsTimeoutEpoch(ForegroundEpoch epoch) {
+    synchronized (sLock) {
+      return sInstance == this && sStateOwner == this && mForegroundEpoch == epoch;
+    }
+  }
+
+  private void retireTimeoutEpoch(ForegroundEpoch epoch) {
+    synchronized (sLock) {
+      if (ownsTimeoutEpoch(epoch)) {
+        mForegroundActive = false;
+        clearOwnedState();
+      }
+    }
+  }
+
+  @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+  private void handleTimeout(int startId, int fgsType, boolean shortServiceCallback) {
+    Bundle notificationBundle;
+    ForegroundEpoch epoch;
+    RuntimeException primary = null;
+    String demotionOutcome = "failed";
+    String stopOutcome = "deferred";
+    synchronized (sLifecycleLock) {
+      final boolean stopAuthorized;
+      final int stopId;
+      final Object stopRequest = sStopRequest;
+      synchronized (sLock) {
+        epoch = mForegroundEpoch;
+        int callbackType =
+            shortServiceCallback ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE : fgsType;
+        if (sInstance != this
+            || sStateOwner != this
+            || epoch == null
+            || epoch.retiring
+            || epoch.retired
+            || !mForegroundActive
+            || (mRunFirstStartId != 0 && startId < mRunFirstStartId)
+            || callbackType <= 0
+            || mCurrentForegroundServiceType <= 0
+            || (callbackType & mCurrentForegroundServiceType) == 0) {
+          return;
+        }
+        // Matching IDs are library authority only. A repeated platform promotion within the
+        // same run can expose coincident metadata, so it never upgrades ambiguous provenance.
+        stopAuthorized =
+            !epoch.ambiguousPromotion
+                && !mTimeoutStartIds.contains(startId)
+                && epoch.satisfiedStartIds.contains(startId);
+        stopId = epoch.lastSatisfiedStartId;
+        notificationBundle =
+            mCurrentNotificationBundle == null ? null : new Bundle(mCurrentNotificationBundle);
+        mTimeoutStartIds.add(startId);
+        epoch.retiring = true;
+      }
+
+      // Nothing that posts an event, converts a model or retires owned evidence precedes this.
+      try {
+        removeForegroundNotification();
+        demotionOutcome = "returned"; // Normal Binder return is not an AMS acknowledgement.
+        retireTimeoutEpoch(epoch);
+      } catch (RuntimeException failure) {
+        primary = failure;
+      }
+
+      if (stopAuthorized
+          && ownsTimeoutEpoch(epoch)
+          && epoch.runGeneration == mRunGeneration
+          && epoch.runGeneration == sRunGeneration
+          && sStopRequest == stopRequest
+          && sPendingStarts.isEmpty()
+          && mLastStartId == stopId
+          && stopId != 0
+          && !mStartCommandFailed
+          && !mStopInitiated) {
+        try {
+          stopOutcome = "failed";
+          StopAuthority authority = captureStopAuthority();
+          boolean stopped = stopSelfResult(stopId);
+          stopOutcome = stopped ? "accepted" : "refused";
+          if (stopped && ownsTimeoutEpoch(epoch) && ownsStopAuthority(authority)) {
+            mStopInitiated = true;
+            retireTimeoutEpoch(epoch);
+          }
+        } catch (RuntimeException failure) {
+          if (primary == null) primary = failure;
+          else if (primary != failure) primary.addSuppressed(failure);
+        }
+      }
+    }
+
+    // Consume publication authority once, including when a reentrant caller still owns locks.
+    final RuntimeException timeoutFailure = primary;
+    final String diagnostic =
+        "Foreground timeout (startId="
             + startId
             + ", type="
             + fgsType
-            + "). Stopping service.");
-
-    Bundle notifBundle;
-    synchronized (sLifecycleLock) {
-      // shortService can report the first START of this run after same-ID updates. Reject only
-      // callbacks from an earlier run, not earlier STARTs within the current run.
-      if (sInstance != this || (mRunFirstStartId != 0 && startId < mRunFirstStartId)) {
-        return;
-      }
-      synchronized (sLock) {
-        notifBundle = sStateOwner == this ? mCurrentNotificationBundle : null;
-        clearOwnedState();
-      }
-      stopForegroundCompat();
-      stopSelf(startId);
+            + ", runGeneration="
+            + epoch.runGeneration
+            + ", demotion="
+            + demotionOutcome
+            + ", stop="
+            + stopOutcome
+            + ").";
+    List<Runnable> publications = sTimeoutPublications.get();
+    if (publications == null) {
+      publications = new ArrayList<>();
+      sTimeoutPublications.set(publications);
     }
-
-    if (notifBundle != null) {
-      NotificationModel model = NotificationModel.fromBundle(notifBundle);
-      Bundle extras = new Bundle();
-      extras.putInt("startId", startId);
-      extras.putInt("fgsType", fgsType);
-      EventBus.post(new NotificationEvent(NotificationEvent.TYPE_FG_TIMEOUT, model, extras));
-    }
+    publications.add(
+        () -> {
+          if (notificationBundle != null) {
+            try {
+              NotificationModel model = NotificationModel.fromBundle(notificationBundle);
+              Bundle extras = new Bundle();
+              extras.putInt("startId", startId);
+              extras.putInt("fgsType", fgsType);
+              EventBus.post(
+                  new NotificationEvent(NotificationEvent.TYPE_FG_TIMEOUT, model, extras));
+            } catch (RuntimeException failure) {
+              if (timeoutFailure != null && timeoutFailure != failure)
+                timeoutFailure.addSuppressed(failure);
+              Logger.w(TAG, "Timeout event publication failed", failure);
+            }
+          }
+          // Preserve the existing error LogEvent, but only after the essential teardown and
+          // timeout publication. Its failure cannot replace a primary platform exception.
+          try {
+            if (timeoutFailure == null) Logger.e(TAG, diagnostic);
+            else Logger.e(TAG, diagnostic, timeoutFailure);
+          } catch (RuntimeException failure) {
+            if (timeoutFailure != null && timeoutFailure != failure)
+              timeoutFailure.addSuppressed(failure);
+            Logger.w(TAG, "Timeout diagnostic publication failed", failure);
+          }
+        });
+    publishTimeoutEventsIfUnlocked();
+    if (primary != null) throw primary;
   }
 }

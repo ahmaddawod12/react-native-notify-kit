@@ -3,7 +3,7 @@
 
 This script is an executor tool, not a runtime qualification produced by host tests.
 Feasibility installs the supplied, verified APK and uses real notification-shade taps.
-Full requires a matching prior feasibility PASS and --authorize-budget-change.
+Full and timeout-only require a matching feasibility PASS and --authorize-budget-change.
 """
 import argparse
 from contextlib import contextmanager
@@ -24,17 +24,31 @@ import importlib.util
 PACKAGE = 'com.notifeeexample'
 COMPONENT = PACKAGE + '/app.notifee.core.ForegroundService'
 KEY = 'data_sync_fgs_timeout_duration'
-HEAD = '5d9ae5b074a57abc1741d4e230f1055ef8b5b14c'
+APPROVED_BASELINE = '4af99ca9eb041e12b1d6c2516d7f623306b01f47'
 FROZEN = {
-    'packages/react-native/android/src/main/java/app/notifee/core/ForegroundService.java': 'efb70c191f2089562a4dd0107bd0a93a8858b9e0abca50d231aa42fb7e111a81',
-    'packages/react-native/android/src/test/java/app/notifee/core/ForegroundServiceTest.java': 'd336321df32c8ed32b2671046c9fa584b86ea63e83e86d4dc15890f71b259b4a',
+    'packages/react-native/android/src/main/java/app/notifee/core/ForegroundService.java': '6eb3bbf53fc5ff8bdc5f1af4e4d32c0635761852d7078c421692c801f8721d0f',
+    'packages/react-native/android/src/test/java/app/notifee/core/ForegroundServiceTest.java': '7158a694ee0de761d069b4d5c618a1b46f6aa35340b881211953dbe9975ecbfa',
+}
+AUTHORIZED_PATHS = frozenset(FROZEN) | {
+    'apps/smoke/ISSUE82_DATASYNC_BUDGET.md',
+    'apps/smoke/__tests__/issue82DataSyncBudgetHarness.test.ts',
+    'apps/smoke/__tests__/issue82HostFixture.cjs',
+    'apps/smoke/__tests__/issue82RuntimeDriver.test.py',
+    'apps/smoke/issue82DataSyncBudgetHarness.ts',
+    'scripts/issue82_receipt.py',
+    'scripts/smoke-test-82-android-datasync-budget.py',
 }
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATHS = ['apps/smoke/android/app/src/main/java/com/notifeeexample/MainApplication.kt','apps/smoke/android/app/src/main/java/com/notifeeexample/Issue82InstanceObserver.kt','apps/smoke/issue82ArmAdmission.ts','apps/smoke/index.js','apps/smoke/App.tsx','apps/smoke/issue82DataSyncBudgetHarness.ts',
                 'apps/smoke/issue82Receipt.ts','apps/smoke/issue81FgsRedeliveryHarness.ts',
                 'apps/smoke/issue44FgsStopHarness.ts','scripts/smoke-test-82-android-datasync-budget.py',
                 'scripts/issue82_receipt.py','apps/smoke/android/app/src/main/AndroidManifest.xml',
-                'apps/smoke/android/app/src/main/java/com/notifeeexample/Issue82ReceiptReceiver.kt']
+                'apps/smoke/android/app/src/main/java/com/notifeeexample/Issue82ReceiptReceiver.kt', *FROZEN]
+# Metro resolves this workspace package through dist. Bind its source and emitted runtime
+# inputs so a stale local package build cannot be inherited by a feasibility/full handoff.
+SOURCE_PATHS += sorted(str(p.relative_to(ROOT)) for folder, suffix in [('src','*.ts'),('dist','*.js')]
+                       for p in (ROOT/'packages/react-native'/folder).rglob(suffix)
+                       if '__mocks__' not in p.parts)
 _receipt_spec = importlib.util.spec_from_file_location('receipt82', ROOT/'scripts/issue82_receipt.py')
 receipt82 = importlib.util.module_from_spec(_receipt_spec)
 _receipt_spec.loader.exec_module(receipt82)
@@ -46,6 +60,74 @@ def utc():
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def require_candidate(e, report):
+    """Admit only linear, allowlisted descendants and the actual frozen working bytes.
+
+    origin/main must be an ancestor of HEAD, so an authorized local commit need not
+    be pushed. Merge, shallow and grafted histories have no approved admission policy.
+    All Git results are recorded by Evidence; replacement objects are disabled.
+    """
+    def git(*args):
+        return e.run(['git', '--no-replace-objects', *args], cwd=ROOT)
+
+    def paths(raw, context):
+        foreign = set(raw.rstrip('\0').split('\0')) - {''} - AUTHORIZED_PATHS
+        if foreign:
+            raise RuntimeError('BLOCKED: unauthorized candidate delta in '+context+': '+repr(sorted(foreign)))
+
+    report['approvedBaseline'] = APPROVED_BASELINE
+    try:
+        head = git('rev-parse', '--verify', 'HEAD^{commit}').strip()
+        if not re.fullmatch(r'[0-9a-f]{40}', head):
+            raise RuntimeError('BLOCKED: effective HEAD is not a verified commit')
+        report['effectiveHead'] = report['head'] = head
+        report['statusBefore'] = git('status', '--short', '--branch', '-uall')
+        if git('rev-parse', '--verify', APPROVED_BASELINE+'^{commit}').strip() != APPROVED_BASELINE:
+            raise RuntimeError('BLOCKED: approved baseline object unavailable')
+        grafts = Path(git('rev-parse', '--git-path', 'info/grafts').strip())
+        if not grafts.is_absolute(): grafts = ROOT/grafts
+        if git('rev-parse', '--is-shallow-repository').strip() != 'false' or grafts.exists():
+            raise RuntimeError('BLOCKED: ambiguous shallow/grafted candidate ancestry')
+        try:
+            git('merge-base', '--is-ancestor', APPROVED_BASELINE, head)
+        except RuntimeError as error:
+            raise RuntimeError('BLOCKED: effective HEAD ancestry does not descend from approved baseline') from error
+        report['branch'] = git('branch', '--show-current').strip()
+        report['upstream'] = git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}').strip()
+        if report['branch'] != 'main' or report['upstream'] != 'origin/main':
+            raise RuntimeError('BLOCKED: candidate branch/upstream provenance mismatch')
+        upstream = git('rev-parse', '--verify', '@{upstream}^{commit}').strip()
+        report['upstreamHead'] = upstream
+        git('merge-base', '--is-ancestor', APPROVED_BASELINE, upstream)
+        git('merge-base', '--is-ancestor', upstream, head)
+        ahead, behind = map(int, git('rev-list', '--left-right', '--count', head+'...'+upstream).split())
+        report['divergence'] = dict(ahead=ahead, behind=behind)
+        commits = git('rev-list', '--parents', APPROVED_BASELINE+'..'+head).splitlines()
+        if any(len(line.split()) != 2 for line in commits):
+            raise RuntimeError('BLOCKED: candidate descendants must have linear single-parent ancestry')
+        report['candidateCommits'] = [line.split()[0] for line in commits]
+        for commit in report['candidateCommits']:
+            paths(git('diff-tree', '--no-commit-id', '--name-only', '--no-renames', '-r', '-z', commit), commit)
+        paths(git('diff', '--name-only', '--no-renames', '-z', APPROVED_BASELINE, head), 'baseline..HEAD')
+        # Check index and worktree independently: a worktree revert can hide a staged edit.
+        paths(git('diff', '--cached', '--name-only', '--no-renames', '-z', head), 'index')
+        paths(git('diff', '--name-only', '--no-renames', '-z'), 'worktree')
+        paths(git('ls-files', '--others', '--exclude-standard', '-z'), 'untracked')
+        # Foreign tracked paths may not hide their bytes from Git's worktree diff.
+        hidden = [entry[2:] for entry in git('ls-files', '-v', '-z').split('\0')
+                  if entry and (entry[0].islower() or entry[0] == 'S')]
+        paths('\0'.join(hidden), 'hidden index flags')
+        report['frozenHashes'] = {p:sha(ROOT/p) for p in FROZEN}
+        if report['frozenHashes'] != FROZEN:
+            raise RuntimeError('BLOCKED: frozen Slice A fingerprint mismatch')
+        report['sourceHashes'] = {p:sha(ROOT/p) for p in SOURCE_PATHS}
+        report['sourceFingerprint'] = hashlib.sha256(receipt82.canonical(report['sourceHashes']).encode()).hexdigest()
+        if git('rev-parse', '--verify', 'HEAD^{commit}').strip() != head or git('status', '--short', '--branch', '-uall') != report['statusBefore']:
+            raise RuntimeError('BLOCKED: candidate changed during host preflight')
+    except (RuntimeError, OSError, ValueError) as error:
+        raise RuntimeError('BLOCKED: candidate provenance verification failed: '+str(error)) from error
 
 
 def markers(raw, correlation, since=0, pid=None, attempt_id=None):
@@ -212,6 +294,75 @@ def java_hash(text):
     for c in text:
         h = (31 * h + ord(c)) & 0xffffffff
     return h if h < 2**31 else h - 2**32
+
+
+def require_feasibility(gate, report):
+    if gate.get('mode') != 'feasibility' or gate.get('verdict') != 'PASS' or any(
+        gate.get(k) != report.get(k) for k in ['serial','fingerprint','bootId','uid','apkHash','sourceHashes']) or (
+        report.get('approvedBaseline') != APPROVED_BASELINE or
+        gate.get('approvedBaseline') != APPROVED_BASELINE or
+        not re.fullmatch(r'[0-9a-f]{40}', str(report.get('effectiveHead', ''))) or
+        gate.get('effectiveHead') != report.get('effectiveHead') or
+        gate.get('head') != gate.get('effectiveHead') or report.get('head') != report.get('effectiveHead')):
+        # No cross-HEAD equivalence has been approved, even for matching source/APK bytes.
+        raise RuntimeError('BLOCKED: matching independently observed feasibility PASS required')
+
+
+def timeout_proof(raw, pos, system_pid):
+    """Two independently attributed log sources; elapsed time and JS are insufficient."""
+    request, record = pos['request'], pos['service']
+    framework, native = [], []
+    for line in raw.splitlines():
+        event = re.match(r'^\s*(\d+\.\d+)\s+(\d+)\s+\d+\s+E\s+(\S+)\s*:\s*(.*)', line)
+        if not event or float(event[1]) < request['epoch']:
+            continue
+        epoch, pid, tag, message = event.groups()
+        if pid == system_pid and tag == 'ActivityManager' and re.search(
+            r'FGS \(dataSync\) timed out: ServiceRecord\{'+re.escape(record['identity'])+
+            r' u0 '+re.escape(COMPONENT)+r'(?: c:'+re.escape(PACKAGE)+r')?\}', message):
+            framework.append(line)
+        if pid == request['logPid'] and tag == 'NOTIFEE':
+            match = re.search(r'Foreground timeout \(startId=(\d+), type=(\d+), runGeneration=(\d+), demotion=(\w+), stop=(\w+)\)', message)
+            if match and match[1] == record['startId'] and match[2] == '1':
+                native.append((line, match))
+    if len(native) > 1 or len(framework) > 1:
+        raise RuntimeError('FAIL: duplicate attributed timeout callback/diagnostic')
+    if not native or not framework or float(native[0][0].split()[0]) < float(framework[0].split()[0]):
+        return None
+    line, match = native[0]
+    if match[4] != 'returned' or match[5] != 'accepted':
+        raise RuntimeError('FAIL: isolated owned timeout demotion/conditional stop '+match[4]+'/'+match[5])
+    return dict(native=[line],framework=framework,startId=match[1],type=1,
+                runGeneration=match[3],demotion=match[4],stop=match[5])
+
+
+def timeout_observation(e, pos, lifetime, proof, seconds):
+    deadline = time.monotonic()+seconds
+    request = pos['request']
+    while time.monotonic() < deadline:
+        raw = e.check_process(lifetime)
+        s, top = e.snapshot()
+        if e.top_seen or top:
+            raise RuntimeError('INCONCLUSIVE: TOP during timeout observation')
+        crash = crash_attribution(raw,request['logPid'])
+        if crash:
+            if 'ForegroundServiceDidNotStopInTimeException' in '\n'.join(crash['evidence']):
+                crash.update(verdict='FAIL',reason='qualified timeout process crashed in target teardown contract')
+            raise RuntimeError(crash['verdict']+': '+crash['reason'])
+        current = timeout_proof(raw,pos,e.system_pid)
+        events = [m for m in markers(raw,request['correlationId'],request['epoch'],request['logPid'],request['attemptId']) if m['marker']=='FG_TIMEOUT_OBSERVED']
+        if not current or len(events) != 1 or events[0].get('eventType') != 9 or events[0].get('detail',{}).get('fgsType') != 1 or str(events[0].get('detail',{}).get('startId')) != proof['startId']:
+            raise RuntimeError('FAIL: timeout payload/idempotence changed during observation')
+        notification = events[0]['detail'].get('notification',{})
+        data = notification.get('data',{})
+        if str(notification.get('id')) not in [request['notificationId'],str(java_hash(request['notificationId']))] or data.get('correlationId') != request['correlationId'] or data.get('attemptId') != request['attemptId'] or data.get('role') != 'fgs':
+            raise RuntimeError('FAIL: timeout latest notification snapshot ownership mismatch')
+        if s is not None or foreground_notification(e.last_notifications,java_hash(request['notificationId'])):
+            raise RuntimeError('FAIL: expired foreground state reappeared after teardown')
+        if any(m['marker']=='RUNNER_STARTED' and m['epoch'] >= float(proof['native'][0].split()[0]) for m in markers(raw,request['correlationId'],request['epoch'])):
+            raise RuntimeError('FAIL: runner acquired after timeout without a new START')
+        time.sleep(2)
+    return dict(seconds=seconds,event=events[0],processSamples=len(lifetime.samples),crashAttribution='none in qualified incarnation')
 
 
 def top_events(raw, uid):
@@ -907,17 +1058,10 @@ def execute(args):
     request = None
     armed = False
     try:
-        report['head'] = e.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT).strip()
-        report['statusBefore'] = e.run(['git','status','--short','--branch','-uall'], cwd=ROOT)
-        if report['head'] != HEAD or e.run(['git','branch','--show-current'], cwd=ROOT).strip() != 'main':
-            raise RuntimeError('BLOCKED: candidate branch/HEAD mismatch')
-        report['frozenHashes'] = {p:sha(ROOT/p) for p in FROZEN}
-        if report['frozenHashes'] != FROZEN:
-            raise RuntimeError('BLOCKED: Slice D fingerprint mismatch')
-        report['sourceHashes'] = {p:sha(ROOT/p) for p in SOURCE_PATHS}
+        require_candidate(e, report)
         report['apkHash'] = sha(args.apk)
         with zipfile.ZipFile(args.apk) as apk:
-            if 'assets/index.android.bundle' not in apk.namelist() or b'issue82-datasync-budget' not in apk.read('assets/index.android.bundle') or not any(b'Tracked START PROMOTION_DENIED' in apk.read(n) for n in apk.namelist() if n.endswith('.dex')):
+            if 'assets/index.android.bundle' not in apk.namelist() or b'issue82-datasync-budget' not in apk.read('assets/index.android.bundle') or not all(any(marker in apk.read(n) for n in apk.namelist() if n.endswith('.dex')) for marker in [b'Tracked START PROMOTION_DENIED',b'Foreground timeout (startId=',b', demotion=']):
                 raise RuntimeError('BLOCKED: candidate/bundled APK identity unproven')
         aapt = str(Path(os.environ.get('ANDROID_HOME', str(Path.home()/'Library/Android/sdk'))) / 'build-tools/36.0.0/aapt2')
         manifest = e.run([aapt,'dump','xmltree',str(Path(args.apk).resolve()),'--file','AndroidManifest.xml'])
@@ -925,6 +1069,10 @@ def execute(args):
         if "package: name='"+PACKAGE+"'" not in badging or "targetSdkVersion:'36'" not in badging or not re.search(r'name[^\n]*="app.notifee.core.ForegroundService"[^\n]*\n[^\n]*exported[^\n]*false\n[^\n]*foregroundServiceType[^\n]*0x00000001', manifest):
             raise RuntimeError('BLOCKED: APK package/targetSdk/dataSync manifest mismatch')
         report['properties'] = e.adb('shell','getprop')
+        e.system_pid=e.adb('shell','pidof','system_server').strip()
+        if not re.fullmatch(r'[1-9]\d*',e.system_pid):
+            raise RuntimeError('BLOCKED: framework log process identity unavailable')
+        report['systemServerPid']=e.system_pid
         api = int(e.adb('shell','getprop','ro.build.version.sdk').strip())
         if api < 35:
             raise RuntimeError('BLOCKED: API >=35 required')
@@ -951,12 +1099,11 @@ def execute(args):
         phone_clock = float(e.adb('shell','date','+%s').strip())
         e.device_offset = phone_clock - (before_clock + time.time())/2
         report['deviceClockOffsetSeconds'] = e.device_offset
-        if args.mode == 'full':
+        if args.mode in ['full','timeout-only']:
             if not args.authorize_budget_change or not args.feasibility_report:
                 raise RuntimeError('BLOCKED: explicit budget authorization and feasibility report required')
             gate = json.loads(Path(args.feasibility_report).read_text())
-            if gate.get('mode')!='feasibility' or gate.get('verdict')!='PASS' or any(gate.get(k)!=report.get(k) for k in ['serial','fingerprint','bootId','uid','apkHash','sourceHashes']):
-                raise RuntimeError('BLOCKED: matching independently observed feasibility PASS required')
+            require_feasibility(gate,report)
         installation = ensure_installed(e,args.apk,report['apkHash'])
         report['installedApkHash'] = installation['hash']
         report['installation'] = installation['action']
@@ -966,7 +1113,7 @@ def execute(args):
             bootId=report['bootId'],package=PACKAGE,uid=e.uid,apkHash=report['apkHash'],
             candidate=hashlib.sha256(receipt82.canonical(report['sourceHashes']).encode()).hexdigest()))
         e.proof_chain = []
-        if args.mode == 'full':
+        if args.mode in ['full','timeout-only']:
             changed = True  # restore even if put has a lost/failed reply
             e.adb('shell','device_config','put','activity_manager',KEY,'180000')
             wait_for(e, lambda s, top: config_value(e.adb('shell','device_config','list','activity_manager'))=='180000' and bool(re.search(r'\b'+KEY+r'=180000\b', e.adb('shell','dumpsys','activity','settings'))), 20, 'effective shortened AMS policy')
@@ -991,9 +1138,9 @@ def execute(args):
         else:
             def timeout(s, top):
                 raw = e.check_process(initial_lifetime)
-                native = [line for line in raw.splitlines() if re.match(r'^\s*\d+\.\d+\s+'+request['logPid']+r'\s+\d+\s+E\s+NOTIFEE\s*:',line) and f"Foreground service timed out (startId={pos['service']['startId']}, type=1)" in line]
-                if s is None and native:
-                    return dict(native=native)
+                proof = timeout_proof(raw,pos,e.system_pid)
+                if s is None and proof:
+                    return proof
                 return None
             report['timeout'] = wait_for(e,timeout,240,'real native dataSync timeout and AMS teardown')
             e.proof_chain[0].update(terminal='timeout',timeout=report['timeout'])
@@ -1006,90 +1153,94 @@ def execute(args):
             report['timeout'].update(wait_for(e,ready_after_timeout,30,'timeout event delivery and next attempt token'))
             report['initialProcessContinuitySamples']=initial_lifetime.samples
             e.active_lifetime=None
-            old_identity=pos['service']['identity']
-            second_since=e.now_device()
-            request=start_action(e,args,correlation,second_since)
-            report['deniedRequest']=request; e.owned_pids.add(request['logPid'])
-            if request['attemptId']==pos['request']['attemptId'] or request['notificationId']==pos['request']['notificationId']:
-                raise RuntimeError('INCONCLUSIVE: attempt reused')
-            lifetime=e.bind_process(request)
-            report['denyingProcessIdentity']=lifetime.identity
-            instance_witness=[]
-            def denied(s, top):
-                if s:
-                    instance_witness.append(s)
-                    if s['identity']==old_identity:
-                        raise RuntimeError('INCONCLUSIVE: old service instance reused')
-                raw=e.check_process(lifetime)
-                ms=markers(raw,correlation,second_since,request['logPid'],request['attemptId'])
-                if any(m['marker']=='START_PROMISE_SETTLED' and m.get('outcome')=='rejected' for m in ms):
-                    raise RuntimeError('BLOCKED: synchronous dispatch/display rejection is not Slice D denial')
-                ns=native_denial(raw,request['logPid'],request['notificationId'])
-                return ns[-1] if ns else None
-            denial=wait_for(e,denied,45,'native tracked initial PROMOTION_DENIED')
-            denial_epoch=float(denial['line'].split()[0])
-            e.check_process(lifetime,denial_epoch)
-            report['nativeDenial']=denial; report['newServiceSnapshots']=instance_witness
-            if not all(denial[k] for k in ['exactException','frameworkPromotion','budgetMessage']):
-                raise RuntimeError('INCONCLUSIVE: exact framework promotion exception/budget evidence incomplete')
-            # Previous record was absent before dispatch; native D contract proves this catch only
-            # applies to an unpromoted current instance. Sampling may miss a short-lived new record.
-            second_raw='\n'.join(line for line in e.negative_raw().splitlines() if re.match(r'^\s*\d+\.\d+',line) and float(line.split()[0])>=second_since)
-            created=created_instances(second_raw, request['logPid'])
-            fast_path=e.output/'ams-fast.raw'
-            if fast_path.exists():
-                error_path=e.output/'ams-fast.stderr.raw'
-                fast=fast_service_records(fast_path.read_text(errors='replace'),request['epoch'],stderr=error_path.read_text(errors='replace') if error_path.exists() else 'missing stderr provenance')
-                for index in range(1,4):
-                    path=e.output/f'ams-fast-{index}.raw';error=e.output/f'ams-fast-{index}.stderr.raw'
-                    if path.exists():
-                        fast.extend(fast_service_records(path.read_text(errors='replace'),request['epoch'],stderr=error.read_text(errors='replace') if error.exists() else 'missing stderr provenance'))
-                instance_witness.extend(s for s in fast if s['pid']==request['logPid'] and s['identity']!=old_identity and s['sampleBegin']<=denial_epoch)
-                report['newServiceSnapshots']=instance_witness
-            distinct=any(s['identity']!=old_identity and s['pid']==request['logPid'] for s in instance_witness) or any(token!=old_identity for token in created)
-            native_proof=native_instance_proof(e.check_process(initial_lifetime) if request['logPid']==pos['request']['logPid'] and lifetime.identity==initial_lifetime.identity else '',request['logPid'],pos['request']['epoch'],float(report['timeout']['native'][-1].split()[0]),request['epoch'],denial_epoch)
-            if native_proof:
-                distinct=True
-                report['nativeInstanceProof']=native_proof
-            report['createdServiceIdentities']=created
-            if any(s.get('foreground') for s in instance_witness):
-                raise RuntimeError('FAIL: denied attempt had AMS foreground publication')
-            if not distinct:
-                raise RuntimeError('INCONCLUSIVE: distinct new instance not observed in AMS snapshots/event log')
-            report['newInstanceProof']='distinct native object observed in the same qualified process, old native destruction and AMS teardown before new tracked delivery' if native_proof else 'distinct AMS ServiceRecord token from complete samples or am_create_service'
-            e.proof_chain.append(dict(request=request,processIdentity=lifetime.identity,promotion=False,
-                terminal='denial',denial=denial,distinct=distinct,nativeInstanceProof=native_proof,
-                service=dict(identity=next((s['identity'] for s in instance_witness if s['identity']!=old_identity),created[-1] if created else native_proof['identity']),identityKind='AMS-ServiceRecord' if instance_witness or created else native_proof['identityKind'],startId=denial['startId'])))
-            report['lanes']['R2']='PASS'
-            if denial['stop']!='accepted':
-                raise RuntimeError('INCONCLUSIVE: denied stop '+denial['stop']+'; additional obligations require review')
-            wait_for(e,lambda s,top: s is None,15,'denied ServiceRecord teardown')
-            deadline=time.monotonic()+args.observation_seconds
-            while time.monotonic()<deadline:
-                qualified_raw=e.check_process(lifetime,denial_epoch)
-                s, top=e.snapshot()
-                if e.top_seen:
-                    raise RuntimeError('INCONCLUSIVE: TOP during negative lane')
-                raw=qualified_raw
+            if args.mode == 'timeout-only':
+                report['timeoutObservation']=timeout_observation(e,pos,initial_lifetime,report['timeout'],args.observation_seconds)
+                report['lanes'].update(R1='PASS',R3='PASS',R4='PASS')
+            else:
+                old_identity=pos['service']['identity']
+                second_since=e.now_device()
+                request=start_action(e,args,correlation,second_since)
+                report['deniedRequest']=request; e.owned_pids.add(request['logPid'])
+                if request['attemptId']==pos['request']['attemptId'] or request['notificationId']==pos['request']['notificationId']:
+                    raise RuntimeError('INCONCLUSIVE: attempt reused')
+                lifetime=e.bind_process(request)
+                report['denyingProcessIdentity']=lifetime.identity
+                instance_witness=[]
+                def denied(s, top):
+                    if s:
+                        instance_witness.append(s)
+                        if s['identity']==old_identity:
+                            raise RuntimeError('INCONCLUSIVE: old service instance reused')
+                    raw=e.check_process(lifetime)
+                    ms=markers(raw,correlation,second_since,request['logPid'],request['attemptId'])
+                    if any(m['marker']=='START_PROMISE_SETTLED' and m.get('outcome')=='rejected' for m in ms):
+                        raise RuntimeError('BLOCKED: synchronous dispatch/display rejection is not Slice D denial')
+                    ns=native_denial(raw,request['logPid'],request['notificationId'])
+                    return ns[-1] if ns else None
+                denial=wait_for(e,denied,45,'native tracked initial PROMOTION_DENIED')
                 denial_epoch=float(denial['line'].split()[0])
-                post_denial='\n'.join(line for line in raw.splitlines() if re.match(r'^\s*\d+\.\d+',line) and float(line.split()[0])>=denial_epoch)
-                crash=crash_attribution(post_denial,request['logPid'])
-                if crash:
-                    report['crashAttribution']=crash
-                    report['lanes']['R3']=crash['verdict']; report['lanes']['R4']=crash['verdict']
-                    raise RuntimeError(crash['verdict']+': '+crash['reason'])
-                if s or foreground_notification(e.last_notifications,java_hash(request['notificationId'])):
-                    raise RuntimeError('INCONCLUSIVE: ServiceRecord or denied FGS notification present after accepted stop')
-                if any(m['marker']=='RUNNER_STARTED' for m in markers(raw,correlation,second_since,request['logPid'],request['attemptId'])):
-                    report['lanes']['R3']='FAIL'
-                    raise RuntimeError('FAIL: denied attempt acquired runner')
-                time.sleep(2)
-            e.check_process(lifetime,denial_epoch)
-            report['processContinuitySamples']=lifetime.samples
-            # Native accepted denial means no state publication under the frozen candidate contract.
-            # No private cache API is introduced; AMS/notifications/runner logs corroborate.
-            report['lanes'].update(R2='PASS',R3='PASS',R4='PASS')
-            report['limitations'].append('No direct core-cache introspection; static frozen contract and runtime publication/runner/AMS evidence combined. Observation window is bounded; OEM-specific longer windows require review.')
+                e.check_process(lifetime,denial_epoch)
+                report['nativeDenial']=denial; report['newServiceSnapshots']=instance_witness
+                if not all(denial[k] for k in ['exactException','frameworkPromotion','budgetMessage']):
+                    raise RuntimeError('INCONCLUSIVE: exact framework promotion exception/budget evidence incomplete')
+                # Previous record was absent before dispatch; native D contract proves this catch only
+                # applies to an unpromoted current instance. Sampling may miss a short-lived new record.
+                second_raw='\n'.join(line for line in e.negative_raw().splitlines() if re.match(r'^\s*\d+\.\d+',line) and float(line.split()[0])>=second_since)
+                created=created_instances(second_raw, request['logPid'])
+                fast_path=e.output/'ams-fast.raw'
+                if fast_path.exists():
+                    error_path=e.output/'ams-fast.stderr.raw'
+                    fast=fast_service_records(fast_path.read_text(errors='replace'),request['epoch'],stderr=error_path.read_text(errors='replace') if error_path.exists() else 'missing stderr provenance')
+                    for index in range(1,4):
+                        path=e.output/f'ams-fast-{index}.raw';error=e.output/f'ams-fast-{index}.stderr.raw'
+                        if path.exists():
+                            fast.extend(fast_service_records(path.read_text(errors='replace'),request['epoch'],stderr=error.read_text(errors='replace') if error.exists() else 'missing stderr provenance'))
+                    instance_witness.extend(s for s in fast if s['pid']==request['logPid'] and s['identity']!=old_identity and s['sampleBegin']<=denial_epoch)
+                    report['newServiceSnapshots']=instance_witness
+                distinct=any(s['identity']!=old_identity and s['pid']==request['logPid'] for s in instance_witness) or any(token!=old_identity for token in created)
+                native_proof=native_instance_proof(e.check_process(initial_lifetime) if request['logPid']==pos['request']['logPid'] and lifetime.identity==initial_lifetime.identity else '',request['logPid'],pos['request']['epoch'],float(report['timeout']['native'][-1].split()[0]),request['epoch'],denial_epoch)
+                if native_proof:
+                    distinct=True
+                    report['nativeInstanceProof']=native_proof
+                report['createdServiceIdentities']=created
+                if any(s.get('foreground') for s in instance_witness):
+                    raise RuntimeError('FAIL: denied attempt had AMS foreground publication')
+                if not distinct:
+                    raise RuntimeError('INCONCLUSIVE: distinct new instance not observed in AMS snapshots/event log')
+                report['newInstanceProof']='distinct native object observed in the same qualified process, old native destruction and AMS teardown before new tracked delivery' if native_proof else 'distinct AMS ServiceRecord token from complete samples or am_create_service'
+                e.proof_chain.append(dict(request=request,processIdentity=lifetime.identity,promotion=False,
+                    terminal='denial',denial=denial,distinct=distinct,nativeInstanceProof=native_proof,
+                    service=dict(identity=next((s['identity'] for s in instance_witness if s['identity']!=old_identity),created[-1] if created else native_proof['identity']),identityKind='AMS-ServiceRecord' if instance_witness or created else native_proof['identityKind'],startId=denial['startId'])))
+                report['lanes']['R2']='PASS'
+                if denial['stop']!='accepted':
+                    raise RuntimeError('INCONCLUSIVE: denied stop '+denial['stop']+'; additional obligations require review')
+                wait_for(e,lambda s,top: s is None,15,'denied ServiceRecord teardown')
+                deadline=time.monotonic()+args.observation_seconds
+                while time.monotonic()<deadline:
+                    qualified_raw=e.check_process(lifetime,denial_epoch)
+                    s, top=e.snapshot()
+                    if e.top_seen:
+                        raise RuntimeError('INCONCLUSIVE: TOP during negative lane')
+                    raw=qualified_raw
+                    denial_epoch=float(denial['line'].split()[0])
+                    post_denial='\n'.join(line for line in raw.splitlines() if re.match(r'^\s*\d+\.\d+',line) and float(line.split()[0])>=denial_epoch)
+                    crash=crash_attribution(post_denial,request['logPid'])
+                    if crash:
+                        report['crashAttribution']=crash
+                        report['lanes']['R3']=crash['verdict']; report['lanes']['R4']=crash['verdict']
+                        raise RuntimeError(crash['verdict']+': '+crash['reason'])
+                    if s or foreground_notification(e.last_notifications,java_hash(request['notificationId'])):
+                        raise RuntimeError('INCONCLUSIVE: ServiceRecord or denied FGS notification present after accepted stop')
+                    if any(m['marker']=='RUNNER_STARTED' for m in markers(raw,correlation,second_since,request['logPid'],request['attemptId'])):
+                        report['lanes']['R3']='FAIL'
+                        raise RuntimeError('FAIL: denied attempt acquired runner')
+                    time.sleep(2)
+                e.check_process(lifetime,denial_epoch)
+                report['processContinuitySamples']=lifetime.samples
+                # Native accepted denial means no state publication under the frozen candidate contract.
+                # No private cache API is introduced; AMS/notifications/runner logs corroborate.
+                report['lanes'].update(R2='PASS',R3='PASS',R4='PASS')
+                report['limitations'].append('No direct core-cache introspection; static frozen contract and runtime publication/runner/AMS evidence combined. Observation window is bounded; OEM-specific longer windows require review.')
             cleanup_control(e,args,correlation); armed=False
             report['verdict']='PASS'
             if args.post_top_recovery:
@@ -1174,7 +1325,7 @@ def main():
     p.add_argument('--serial',required=True)
     p.add_argument('--apk',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True,help='new directory outside repository')
-    p.add_argument('--mode',choices=['feasibility','full'],default='feasibility')
+    p.add_argument('--mode',choices=['feasibility','full','timeout-only'],default='feasibility')
     p.add_argument('--manual-actions',action='store_true',help='operator taps real Android shade UI; waits remain bounded')
     p.add_argument('--authorize-budget-change',action='store_true')
     p.add_argument('--feasibility-report',type=Path)
@@ -1185,8 +1336,10 @@ def main():
         p.error('evidence output must be outside repository')
     if not 30<=args.observation_seconds<=180:
         p.error('observation-seconds must be 30..180; qualify platform crash windows independently')
-    if args.mode=='full' and (not args.authorize_budget_change or not args.feasibility_report):
-        p.error('full requires --authorize-budget-change and --feasibility-report')
+    if args.mode in ['full','timeout-only'] and (not args.authorize_budget_change or not args.feasibility_report):
+        p.error('full/timeout-only require --authorize-budget-change and --feasibility-report')
+    if args.mode=='timeout-only' and not args.post_top_recovery:
+        p.error('timeout-only requires --post-top-recovery to qualify subsequent START/STOP')
     return execute(args)
 
 

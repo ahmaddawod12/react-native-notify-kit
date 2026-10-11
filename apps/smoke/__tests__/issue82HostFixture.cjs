@@ -96,6 +96,16 @@ readline.createInterface({ input: process.stdin }).on('line', async line => {
         if (n) h.runner(n);
       }
     }
+    if (c.op === 'timeout') {
+      // Host simulation only: runtime proof requires the independent AMS/framework gates.
+      const n = [...db.values()].find(n => n.android?.asForegroundService);
+      if (!n) throw new Error('no owned simulated foreground notification');
+      db.delete(n.id);
+      await h.handle({
+        type: 9,
+        detail: { notification: n, startId: c.startId, fgsType: c.fgsType },
+      });
+    }
     if (c.op === 'cold') make();
     await new Promise(r => setImmediate(r));
     process.stdout.write(

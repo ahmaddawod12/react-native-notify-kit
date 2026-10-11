@@ -75,14 +75,1035 @@ public class ForegroundServiceTest {
     }
     org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle();
     ContextHolder.setApplicationContext(RuntimeEnvironment.getApplication());
-    // Reset public and private static fields to prevent cross-test pollution. The three private
-    // statics are cleared via reflection here so that tests which seed them directly (to exercise
-    // onTimeout without running the full START path) cannot leak state into neighbouring tests.
+    // Reset caches and lifecycle registries only after runtime observations, so preserved
+    // UNKNOWN obligations and services created directly cannot leak into neighbouring tests.
     ForegroundService.mCurrentNotificationId = null;
     ForegroundService.mCurrentForegroundServiceType = -1;
     setPrivateStatic("mCurrentNotificationBundle", null);
     setPrivateStatic("mCurrentNotification", null);
     setPrivateStatic("mCurrentHashCode", 0);
+    // Undelivered UNKNOWN obligations must survive runtime teardown, but never leak across tests.
+    issue81Pending().clear();
+    setPrivateStatic("sStopRequest", null);
+    setPrivateStatic("sRunGeneration", 0L);
+    setPrivateStatic("sInstance", null);
+    setPrivateStatic("sStateOwner", null);
+    SliceAShadowService.reset();
+  }
+
+  // Slice A's platform model deliberately separates acceptance, delivery, promotion and stop.
+  // Its state is a host oracle, not a simulation claiming to reproduce AMS/Binder semantics.
+  private ForegroundService sliceAService(int type) throws Exception {
+    SliceAShadowService.reset();
+    declareForegroundServiceTypes(type);
+    createChannel();
+    ForegroundService service = buildService().create().get();
+    sliceADeliver(service, buildStartIntent("slice-a", 820, "A", type), 1);
+    return service;
+  }
+
+  private static SliceAShadowService sliceAPlatform(ForegroundService service) {
+    return (SliceAShadowService) org.robolectric.Shadows.shadowOf(service);
+  }
+
+  private static void sliceADeliver(ForegroundService service, Intent intent, int id) {
+    SliceAShadowService platform = sliceAPlatform(service);
+    platform.accepted = Math.max(platform.accepted, id);
+    platform.delivered = id;
+    service.onStartCommand(intent, 0, id);
+  }
+
+  private static void sliceATimeout(ForegroundService service, int id) {
+    service.onTimeout(id, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+  }
+
+  @Test
+  @Config(
+      sdk = {34, 35},
+      shadows = SliceAShadowService.class)
+  public void sliceA_demotionPrecedesDestructiveRetirementAndEventWork() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    Object runner = issue81Field(service, "mRunnerToken");
+    SliceAShadowService.beforeDemotion =
+        () -> {
+          try {
+            assertCurrentState("slice-a", 820, "A");
+            assertSame(runner, issue81Field(service, "mRunnerToken"));
+            assertTrue(SliceAShadowService.order.isEmpty());
+          } catch (Exception e) {
+            throw new AssertionError(e);
+          }
+        };
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      sliceATimeout(service, 1);
+      assertEquals(
+          java.util.Arrays.asList("demote", "stop:1", "event"),
+          SliceAShadowService.order.stream()
+              .filter(x -> !x.equals("log"))
+              .collect(java.util.stream.Collectors.toList()));
+      assertEquals(1, events.events.size());
+      assertEquals(9, events.events.get(0).getType());
+      assertFalse(sliceAPlatform(service).foreground);
+      assertTrue(sliceAPlatform(service).stopped);
+      assertNull(ForegroundService.mCurrentNotificationId);
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_oldInstanceAndOldRunPreserveSuccessor() throws Exception {
+    ForegroundService old = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    ForegroundService current = buildService().create().get();
+    sliceADeliver(
+        current,
+        buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+        2);
+    SliceAShadowService.order.clear();
+    sliceATimeout(old, 1);
+    assertTrue(SliceAShadowService.order.isEmpty());
+    assertCurrentState("new", 821, "B");
+    sliceADeliver(current, buildStopIntent(), 3);
+    sliceADeliver(
+        current,
+        buildStartIntent("new", 821, "C", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+        4);
+    SliceAShadowService.order.clear();
+    sliceATimeout(current, 2);
+    assertTrue(SliceAShadowService.order.isEmpty());
+    assertCurrentState("new", 821, "C");
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_ambiguousCompatibleCallbackDemotesWithoutSuccessorStop() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    // No immutable Android epoch is available for this coincident callback ID after type promotion.
+    sliceADeliver(
+        service,
+        buildStartIntent(
+            "slice-a",
+            820,
+            "B",
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK),
+        2);
+    SliceAShadowService.order.clear();
+    sliceATimeout(service, 2);
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_unknownCallbackIdCompatibleDemotesWithoutBorrowingDeliveredId()
+      throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    sliceATimeout(service, 99);
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_incompatibleTypeAndSingleArgumentDoNothing() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+    service.onTimeout(1);
+    assertTrue(SliceAShadowService.order.isEmpty());
+    assertTrue(sliceAPlatform(service).foreground);
+    assertCurrentState("slice-a", 820, "A");
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_reservedUnknownAndAcceptedUndeliveredStartsRemainHeld() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RecordingServiceContext context = useRecordingContext();
+    context.startFailure = new RuntimeException("lost Binder reply");
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            ForegroundService.start(821, buildNotification(), buildNotificationBundle("pending")));
+    Object pending = issue81Pending().values().iterator().next();
+    sliceAPlatform(service).accepted = 2;
+    sliceATimeout(service, 1);
+    assertEquals(1, issue81Pending().size());
+    assertSame(pending, issue81Pending().values().iterator().next());
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+    assertTrue(
+        ShadowLog.getLogsForTag("NOTIFEE").stream().anyMatch(x -> x.msg.contains("stop=deferred")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_acceptedButUndeliveredAmsStartRefusesConditionalStop() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    sliceAPlatform(service).accepted = 2; // framework accepted another START outside the registry
+    sliceATimeout(service, 1);
+    assertEquals(1, sliceAPlatform(service).delivered);
+    assertFalse(sliceAPlatform(service).stopped);
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+    assertTrue(
+        ShadowLog.getLogsForTag("NOTIFEE").stream().anyMatch(x -> x.msg.contains("stop=refused")));
+  }
+
+  @Test
+  @Config(
+      sdk = {34, 35},
+      shadows = SliceAShadowService.class)
+  public void sliceA_shortServiceInitialIdStopsLatestSatisfiedSameRun() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
+    sliceADeliver(
+        service,
+        buildStartIntent("slice-a", 820, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE),
+        2);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      service.onTimeout(1);
+      assertTrue(sliceAPlatform(service).stopped);
+      assertTrue(SliceAShadowService.order.contains("stop:2"));
+      assertEquals("B", events.events.get(0).getNotification().toBundle().getString("title"));
+      assertEquals(1, events.events.get(0).getExtras().getInt("startId"));
+      assertEquals(-1, events.events.get(0).getExtras().getInt("fgsType"));
+      assertEquals(1, sliceAPlatform(service).promotions);
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_failedUpdateRetainsLatestA() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.promotionFailure = new SecurityException("update B failed");
+    assertThrows(
+        SecurityException.class,
+        () ->
+            sliceADeliver(
+                service,
+                buildStartIntent(
+                    "slice-a", 820, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK),
+                2));
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      sliceATimeout(service, 1);
+      assertEquals("A", events.events.get(0).getNotification().toBundle().getString("title"));
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_stopRefusalIsNotSuccessAndIsNotRetried() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.stopResult = false;
+    sliceATimeout(service, 1);
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+    sliceATimeout(service, 1);
+    idleMain();
+    assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.startsWith("stop:")).count());
+    assertTrue(
+        ShadowLog.getLogsForTag("NOTIFEE").stream().anyMatch(x -> x.msg.contains("stop=refused")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_stopThrowStillAttemptsEventAndPropagatesOriginal() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RuntimeException failure = new SecurityException("stop failure");
+    SliceAShadowService.stopFailure = failure;
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      assertSame(failure, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+      assertEquals(1, events.events.size());
+      assertNull(ForegroundService.mCurrentNotificationId);
+      assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+      sliceATimeout(service, 1);
+      assertEquals(1, events.events.size());
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_demotionThrowPreservesEvidenceAndPrimaryEvenWhenStopThrows() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    Object runner = issue81Field(service, "mRunnerToken");
+    RuntimeException primary = new SecurityException("demotion failure");
+    RuntimeException secondary = new IllegalStateException("fallback failure");
+    SliceAShadowService.demotionFailure = primary;
+    SliceAShadowService.stopFailure = secondary;
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      assertSame(primary, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+      assertCurrentState("slice-a", 820, "A");
+      assertSame(runner, issue81Field(service, "mRunnerToken"));
+      assertTrue(sliceAPlatform(service).foreground);
+      assertEquals(1, events.events.size());
+      assertTrue(java.util.Arrays.asList(primary.getSuppressed()).contains(secondary));
+      sliceATimeout(service, 1);
+      assertEquals(1, events.events.size());
+      assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.equals("demote")).count());
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_demotionThrowFallbackAcceptedRetiresButStillThrows() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RuntimeException failure = new SecurityException("demotion failure");
+    SliceAShadowService.demotionFailure = failure;
+    assertSame(failure, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+    assertTrue(sliceAPlatform(service).stopped);
+    assertTrue((boolean) issue81Field(service, "mStopInitiated"));
+    assertNull(ForegroundService.mCurrentNotificationId);
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_demotionThrowWithPendingDoesNotFallback() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    useRecordingContext();
+    ForegroundService.start(821, buildNotification(), buildNotificationBundle("pending"));
+    sliceAPlatform(service).accepted = 2;
+    RuntimeException failure = new SecurityException("demotion failure");
+    SliceAShadowService.demotionFailure = failure;
+    assertSame(failure, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+    assertCurrentState("slice-a", 820, "A");
+    assertEquals(1, issue81Pending().size());
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_duplicatesAcrossOverloadsAttemptOnce() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      service.onTimeout(1);
+      service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
+      service.onTimeout(1);
+      assertEquals(1, events.events.size());
+      assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.equals("demote")).count());
+      assertEquals(
+          1, SliceAShadowService.order.stream().filter(x -> x.startsWith("stop:")).count());
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_multipleTypeMaskPreservesOriginalMetadata() throws Exception {
+    int mask =
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+    ForegroundService service = sliceAService(mask);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      service.onTimeout(1, mask);
+      assertFalse(sliceAPlatform(service).foreground);
+      assertEquals(mask, events.events.get(0).getExtras().getInt("fgsType"));
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_reentrantPromotionAfterDemotionProtectsSuccessor() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.afterDemotion =
+        () ->
+            sliceADeliver(
+                service,
+                buildStartIntent(
+                    "slice-a", 820, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+                2);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      sliceATimeout(service, 1);
+      assertCurrentState("slice-a", 820, "B");
+      assertTrue(sliceAPlatform(service).foreground);
+      assertTrue((boolean) issue81Field(service, "mForegroundActive"));
+      assertNotNull(issue81Field(service, "mRunnerToken"));
+      assertFalse(sliceAPlatform(service).stopped);
+      assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+      assertEquals("A", events.events.get(0).getNotification().toBundle().getString("title"));
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_reentrantReservationDuringDemotionDefersStop() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    useRecordingContext();
+    SliceAShadowService.afterDemotion =
+        () -> {
+          ForegroundService.start(821, buildNotification(), buildNotificationBundle("pending"));
+          sliceAPlatform(service).accepted = 2;
+        };
+    sliceATimeout(service, 1);
+    assertEquals(1, issue81Pending().size());
+    assertFalse(sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_reentrantStopReplyCannotMarkSuccessorStopped() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.afterStop =
+        () ->
+            sliceADeliver(
+                service,
+                buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+                2);
+    sliceATimeout(service, 1);
+    assertCurrentState("new", 821, "B");
+    assertTrue((boolean) issue81Field(service, "mForegroundActive"));
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_timeoutAndStopInBothOrders() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    sliceATimeout(service, 1);
+    ForegroundService.stop();
+    idleMain();
+    assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.startsWith("stop:")).count());
+    sliceADeliver(
+        service,
+        buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+        2);
+    ForegroundService.stop();
+    idleMain();
+    SliceAShadowService.order.clear();
+    sliceATimeout(service, 2);
+    assertTrue(SliceAShadowService.order.isEmpty());
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_timeoutAndRunnerCompletionInBothOrders() throws Exception {
+    SliceAShadowService.reset();
+    declareForegroundServiceTypes(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    createChannel();
+    ForegroundService service = buildService().create().get();
+    FgsRunnerCapture runners = new FgsRunnerCapture();
+    EventBus.register(runners);
+    try {
+      sliceADeliver(
+          service,
+          buildStartIntent("slice-a", 820, "A", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+          1);
+      sliceATimeout(service, 1);
+      runners.events.get(0).setCompletionResult();
+      assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.equals("demote")).count());
+      sliceADeliver(
+          service,
+          buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+          2);
+      runners.events.get(1).setCompletionResult();
+      SliceAShadowService.order.clear();
+      sliceATimeout(service, 2);
+      assertTrue(SliceAShadowService.order.isEmpty());
+    } finally {
+      EventBus.unregister(runners);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_api36And37PolicySimulation() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    try {
+      for (int api : new int[] {36, 37}) {
+        org.robolectric.util.ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", api);
+        if (api == 37)
+          sliceADeliver(
+              service,
+              buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+              2);
+        sliceATimeout(service, api == 36 ? 1 : 2);
+        assertFalse(sliceAPlatform(service).foreground);
+      }
+    } finally {
+      org.robolectric.util.ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", 35);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_explicitUnresolvedTypeDoesNotMasqueradeAsShortSentinel() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
+    service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST);
+    service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE);
+    assertTrue(SliceAShadowService.order.isEmpty());
+    assertCurrentState("slice-a", 820, "A");
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_reservedBinderReplyDoesNotBlockDemotionOrLoseAcceptance() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    try (Issue81LateReply pending = new Issue81LateReply(null, true)) {
+      pending.awaitDispatch();
+      Object request = issue81Pending().values().iterator().next();
+      assertFalse((boolean) issue82RequestField(request, "accepted"));
+      sliceATimeout(service, 1);
+      assertFalse(sliceAPlatform(service).foreground);
+      assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+      assertSame(request, issue81Pending().values().iterator().next());
+      pending.settle();
+      sliceAPlatform(service).accepted = 2;
+      assertTrue((boolean) issue82RequestField(request, "accepted"));
+      idleMain();
+      assertSame(request, issue81Pending().values().iterator().next());
+      assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_unfulfilledDeliveredStartCannotBecomeStopId() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    // A failed replacement reserves a new run without satisfying its publication authority.
+    ForegroundService.stop();
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService.start(821, buildNotification(), buildNotificationBundle("replacement"));
+    SliceAShadowService.promotionFailure = new SecurityException("replacement failed");
+    assertThrows(SecurityException.class, () -> sliceADeliver(service, context.starts.get(0), 2));
+    sliceATimeout(service, 1);
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_nestedTimeoutPublishesOutsideBothLocksWithoutWaiting() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      SliceAShadowService.afterDemotion =
+          () -> {
+            sliceADeliver(
+                service,
+                buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+                2);
+            sliceATimeout(service, 2);
+          };
+      sliceATimeout(service, 1);
+      assertEquals(2, events.events.size());
+      assertFalse(
+          "publication must not inherit a reentrant caller's monitors", events.publishedUnderLock);
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_eventFailureIsBestEffortAndCannotReplaceDemotionFailure() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RuntimeException primary = new SecurityException("demotion failure");
+    RuntimeException eventFailure = new IllegalArgumentException("event failure");
+    SliceAShadowService.demotionFailure = primary;
+    SliceAShadowService.stopResult = false;
+    int[] attempts = {0};
+    try (org.mockito.MockedStatic<EventBus> mocked =
+        org.mockito.Mockito.mockStatic(EventBus.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+      mocked
+          .when(() -> EventBus.post(org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                Object event = invocation.getArgument(0);
+                if (event instanceof NotificationEvent
+                    && ((NotificationEvent) event).getType() == 9) {
+                  attempts[0]++;
+                  throw eventFailure;
+                }
+                return invocation.callRealMethod();
+              });
+      assertSame(primary, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+      assertTrue(java.util.Arrays.asList(primary.getSuppressed()).contains(eventFailure));
+      sliceATimeout(service, 1);
+      assertEquals(1, attempts[0]);
+      assertTrue(
+          ShadowLog.getLogsForTag("NOTIFEE").stream().anyMatch(x -> x.throwable == eventFailure));
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_reentrantDuplicateAndExplicitStopPreserveTheirAuthority() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.beforeDemotion = () -> sliceATimeout(service, 1);
+    SliceAShadowService.afterDemotion = ForegroundService::stop;
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      sliceATimeout(service, 1);
+      Object stop = getPrivateStatic("sStopRequest");
+      assertNotNull(stop);
+      assertEquals(1, events.events.size());
+      assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+      idleMain();
+      assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.equals("stop:1")).count());
+      assertNull(getPrivateStatic("sStopRequest"));
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_timeoutDiagnosticRemainsErrorLogEventAfterDemotion() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      sliceATimeout(service, 1);
+      assertEquals(1, events.logs.size());
+      assertEquals(app.notifee.core.event.LogEvent.LEVEL_ERROR, events.logs.get(0).getLevel());
+      assertEquals(
+          java.util.Arrays.asList("demote", "stop:1", "event", "log"), SliceAShadowService.order);
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_diagnosticEventFailureCannotReplacePrimary() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RuntimeException primary = new SecurityException("demotion failure");
+    RuntimeException logFailure = new IllegalArgumentException("diagnostic event failure");
+    SliceAShadowService.demotionFailure = primary;
+    SliceAShadowService.stopResult = false;
+    int[] attempts = {0};
+    try (org.mockito.MockedStatic<EventBus> mocked =
+        org.mockito.Mockito.mockStatic(EventBus.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+      mocked
+          .when(() -> EventBus.post(org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                if (invocation.getArgument(0) instanceof app.notifee.core.event.LogEvent) {
+                  attempts[0]++;
+                  throw logFailure;
+                }
+                return invocation.callRealMethod();
+              });
+      assertSame(primary, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+      assertEquals(1, attempts[0]);
+      assertTrue(java.util.Arrays.asList(primary.getSuppressed()).contains(logFailure));
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_failedDemotionConsumesRunnerAuthorityWithoutErasingEvidence()
+      throws Exception {
+    SliceAShadowService.reset();
+    createChannel();
+    declareForegroundServiceTypes(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    ForegroundService service = buildService().create().get();
+    FgsRunnerCapture runners = new FgsRunnerCapture();
+    EventBus.register(runners);
+    try {
+      sliceADeliver(
+          service,
+          buildStartIntent("slice-a", 820, "A", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+          1);
+      Object runner = issue81Field(service, "mRunnerToken");
+      RuntimeException failure = new SecurityException("demotion failure");
+      SliceAShadowService.demotionFailure = failure;
+      SliceAShadowService.stopResult = false;
+      assertSame(failure, assertThrows(RuntimeException.class, () -> sliceATimeout(service, 1)));
+      runners.events.get(0).setCompletionResult();
+      assertFalse(ForegroundService.repostIfActive("slice-a"));
+      assertCurrentState("slice-a", 820, "A");
+      assertSame(runner, issue81Field(service, "mRunnerToken"));
+      assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.equals("demote")).count());
+    } finally {
+      EventBus.unregister(runners);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_supersededOldDeliveryCannotBorrowCurrentRunStopAuthority() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService.start(820, buildNotification(), buildNotificationBundle("old"));
+    Intent old = context.starts.get(0);
+    ForegroundService.stop();
+    ForegroundService.start(821, buildNotification(), buildNotificationBundle("new"));
+    Intent current = context.starts.get(1);
+    sliceADeliver(service, current, 3);
+    sliceADeliver(service, old, 2); // actual older START delivered after its successor
+    assertEquals(3, sliceAPlatform(service).accepted);
+    assertEquals(2, sliceAPlatform(service).delivered);
+    assertTrue(issue81Pending().isEmpty());
+    SliceAShadowService.order.clear();
+    sliceATimeout(service, 3);
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(
+        "old run delivery must not supply the timeout stop ID",
+        SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(
+      sdk = 35,
+      shadows = {SliceAShadowService.class, SliceAPostingShadowManager.class})
+  public void sliceA_reentrantPostingTimeoutDrainsAtUnlockedBoundary() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      SliceAPostingShadowManager.callback = () -> sliceATimeout(service, 1);
+      assertTrue(ForegroundService.repostIfActive("slice-a"));
+      assertFalse(sliceAPlatform(service).foreground);
+      assertEquals(
+          "an admitted timeout must attempt its event before the outer call returns",
+          1,
+          events.events.size());
+      assertFalse(events.publishedUnderLock);
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Implements(NotificationManager.class)
+  public static class SliceAPostingShadowManager extends ShadowNotificationManager {
+    static Runnable callback;
+
+    @Implementation
+    protected void notify(String tag, int id, Notification notification) {
+      if (callback != null) {
+        Runnable timeout = callback;
+        callback = null;
+        timeout.run();
+      }
+      super.notify(tag, id, notification);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_retiredCallbackMetadataCannotStopNewlyDeliveredSuccessor() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService.start(821, buildNotification(), buildNotificationBundle("new"));
+    Intent successor = context.starts.get(0);
+    sliceAPlatform(service).accepted = 2;
+    sliceATimeout(service, 2); // Android metadata names an accepted, not yet delivered START.
+    assertEquals(1, issue81Pending().size());
+    sliceADeliver(service, successor, 2);
+    assertTrue(issue81Pending().isEmpty());
+    SliceAShadowService.order.clear();
+    sliceATimeout(service, 2); // Indistinguishable old duplicate or fresh timeout: A3 applies.
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(
+        "matching callback metadata is not immutable Android epoch provenance",
+        sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_explicitStopReplyCannotRetireReentrantSuccessor() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.afterStop =
+        () ->
+            sliceADeliver(
+                service,
+                buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+                2);
+    ForegroundService.stop();
+    idleMain();
+    assertCurrentState("new", 821, "B");
+    assertTrue((boolean) issue81Field(service, "mForegroundActive"));
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_terminalStopReplyCannotRetireReentrantSuccessor() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.afterStop =
+        () ->
+            sliceADeliver(
+                service,
+                buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+                3);
+    sliceADeliver(service, buildStopIntent(), 2);
+    assertCurrentState("new", 821, "B");
+    assertTrue((boolean) issue81Field(service, "mForegroundActive"));
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_denialStopReplyCannotMarkReentrantSuccessorStopped() throws Exception {
+    SliceAShadowService.reset();
+    declareForegroundServiceTypes(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    createChannel();
+    ForegroundService service = buildService().create().get();
+    RecordingServiceContext context = useRecordingContext();
+    Intent denied = issue82Dispatch(context, "A", 821);
+    SliceAShadowService.promotionFailure =
+        new ForegroundServiceStartNotAllowedException("tracked denial");
+    SliceAShadowService.afterStop =
+        () -> {
+          SliceAShadowService.promotionFailure = null;
+          sliceADeliver(
+              service,
+              buildStartIntent("new", 822, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+              2);
+        };
+    sliceADeliver(service, denied, 1);
+    assertCurrentState("new", 822, "B");
+    assertTrue((boolean) issue81Field(service, "mForegroundActive"));
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_timeoutStopReplyWithNewPendingCannotMarkAdmissionStopped() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    useRecordingContext();
+    SliceAShadowService.afterStop =
+        () -> ForegroundService.start(821, buildNotification(), buildNotificationBundle("pending"));
+    sliceATimeout(service, 1);
+    assertEquals(1, issue81Pending().size());
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(
+      sdk = 35,
+      shadows = {SliceAShadowService.class, SliceAPostingShadowManager.class})
+  public void sliceA_timeoutDuringUpdateCannotRepublishRetiredCache() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAEvents events = new SliceAEvents();
+    EventBus.register(events);
+    try {
+      SliceAPostingShadowManager.callback = () -> sliceATimeout(service, 1);
+      sliceADeliver(
+          service,
+          buildStartIntent("slice-a", 820, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+          2);
+      assertNull(ForegroundService.mCurrentNotificationId);
+      assertNull(getPrivateStatic("mCurrentNotificationBundle"));
+      assertNull(getPrivateStatic("mCurrentNotification"));
+      assertEquals(-1, ForegroundService.mCurrentForegroundServiceType);
+      assertNull(issue81Field(service, "mRunnerToken"));
+      assertFalse((boolean) issue81Field(service, "mForegroundActive"));
+      assertEquals(1, events.events.size());
+      assertEquals("A", events.events.get(0).getNotification().toBundle().getString("title"));
+      assertFalse(events.publishedUnderLock);
+    } finally {
+      EventBus.unregister(events);
+    }
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_explicitStopRefusalRestoresOnlyOriginalRequest() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.stopResult = false;
+    ForegroundService.stop();
+    Object request = getPrivateStatic("sStopRequest");
+    idleMain();
+    assertSame(request, getPrivateStatic("sStopRequest"));
+    assertCurrentState("slice-a", 820, "A");
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+    idleMain();
+    assertEquals(1, SliceAShadowService.order.stream().filter(x -> x.startsWith("stop:")).count());
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_explicitStopThrowRestoresOnlyOriginalRequestAndPropagates() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RuntimeException failure = new SecurityException("explicit stop failure");
+    SliceAShadowService.stopFailure = failure;
+    ForegroundService.stop();
+    Object request = getPrivateStatic("sStopRequest");
+    assertSame(failure, assertThrows(RuntimeException.class, ForegroundServiceTest::idleMain));
+    assertSame(request, getPrivateStatic("sStopRequest"));
+    assertCurrentState("slice-a", 820, "A");
+    assertFalse((boolean) issue81Field(service, "mStopInitiated"));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_retiredCallbackCollisionAcrossGenerationCannotStopSuccessor()
+      throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    RecordingServiceContext context = useRecordingContext();
+    ForegroundService.stop();
+    ForegroundService.start(821, buildNotification(), buildNotificationBundle("new"));
+    Intent successor = context.starts.get(0);
+    sliceAPlatform(service).accepted = 2;
+    sliceATimeout(service, 2);
+    assertEquals(1, issue81Pending().size());
+    sliceADeliver(service, successor, 2);
+    assertTrue(issue81Pending().isEmpty());
+    SliceAShadowService.order.clear();
+    sliceATimeout(service, 2);
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(
+        "a generation change cannot prove Android callback provenance",
+        sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  @Test
+  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  public void sliceA_retiredSameRunPromotionRemainsAmbiguous() throws Exception {
+    ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+    SliceAShadowService.stopResult = false;
+    sliceATimeout(service, 1);
+    sliceADeliver(
+        service,
+        buildStartIntent("new", 821, "B", ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC),
+        2);
+    SliceAShadowService.stopResult = true;
+    SliceAShadowService.order.clear();
+    sliceATimeout(service, 2);
+    assertFalse(sliceAPlatform(service).foreground);
+    assertFalse(sliceAPlatform(service).stopped);
+    assertFalse(SliceAShadowService.order.stream().anyMatch(x -> x.startsWith("stop:")));
+  }
+
+  public static class SliceAEvents {
+    boolean publishedUnderLock;
+    final List<NotificationEvent> events = new ArrayList<>();
+    final List<app.notifee.core.event.LogEvent> logs = new ArrayList<>();
+
+    @Subscribe(threadMode = ThreadMode.POSTING)
+    public void notification(NotificationEvent event) {
+      if (event.getType() == 9) {
+        try {
+          publishedUnderLock |=
+              Thread.holdsLock(getPrivateStatic("sLifecycleLock"))
+                  || Thread.holdsLock(getPrivateStatic("sLock"));
+        } catch (Exception e) {
+          throw new AssertionError(e);
+        }
+        SliceAShadowService.order.add("event");
+        events.add(event);
+      }
+    }
+
+    @Subscribe(threadMode = ThreadMode.POSTING)
+    public void log(app.notifee.core.event.LogEvent event) {
+      logs.add(event);
+      SliceAShadowService.order.add("log");
+    }
+  }
+
+  @Implements(Service.class)
+  public static class SliceAShadowService extends ShadowService {
+    static final List<String> order = new ArrayList<>();
+    static RuntimeException promotionFailure, demotionFailure, stopFailure;
+    static Runnable beforeDemotion, afterDemotion, afterStop;
+    static boolean stopResult;
+    int accepted, delivered, promotions, type;
+    boolean foreground, stopped;
+
+    static void reset() {
+      order.clear();
+      promotionFailure = demotionFailure = stopFailure = null;
+      beforeDemotion = afterDemotion = afterStop = null;
+      stopResult = true;
+    }
+
+    @Implementation
+    protected void startForeground(int id, Notification notification, int foregroundServiceType) {
+      if (promotionFailure != null) throw promotionFailure;
+      promotions++;
+      foreground = true;
+      stopped = false;
+      type = foregroundServiceType;
+      super.startForeground(id, notification, foregroundServiceType);
+    }
+
+    @Implementation
+    protected void stopForeground(int flags) {
+      if (beforeDemotion != null) {
+        Runnable hook = beforeDemotion;
+        beforeDemotion = null;
+        hook.run();
+      }
+      order.add("demote");
+      assertEquals(Service.STOP_FOREGROUND_REMOVE, flags);
+      if (demotionFailure != null) throw demotionFailure;
+      foreground = false;
+      type = 0;
+      super.stopForeground(flags);
+      if (afterDemotion != null) {
+        Runnable hook = afterDemotion;
+        afterDemotion = null;
+        hook.run();
+      }
+    }
+
+    @Implementation
+    protected boolean stopSelfResult(int startId) {
+      order.add("stop:" + startId);
+      if (stopFailure != null) throw stopFailure;
+      boolean result = stopResult && startId == accepted;
+      if (result) {
+        stopped = true;
+        foreground = false;
+        super.stopSelfResult(startId);
+      }
+      if (afterStop != null) {
+        Runnable hook = afterStop;
+        afterStop = null;
+        hook.run();
+      }
+      return result;
+    }
+
+    @Implementation
+    protected void stopSelf(int startId) {
+      order.add("forbidden-stop:" + startId);
+      throw new AssertionError("timeout must use observable conditional stopSelfResult");
+    }
+
+    @Implementation
+    protected void stopSelf() {
+      throw new AssertionError("indiscriminate stop is forbidden");
+    }
   }
 
   // Slice D uses the real UUID reservation/dispatch path. API 36/37 below are policy-boundary
@@ -4030,7 +5051,8 @@ public class ForegroundServiceTest {
     ForegroundService service = controller.create().get();
 
     String id = "fgs-timeout-api34";
-    seedActiveForegroundServiceState(id);
+    seedActiveForegroundServiceState(
+        service, id, 42, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
 
     FgsEventCapture capture = new FgsEventCapture();
     EventBus.register(capture);
@@ -4072,7 +5094,7 @@ public class ForegroundServiceTest {
     ForegroundService service = controller.create().get();
 
     String id = "fgs-timeout-api35";
-    seedActiveForegroundServiceState(id);
+    seedActiveForegroundServiceState(service, id, 7, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
 
     FgsEventCapture capture = new FgsEventCapture();
     EventBus.register(capture);
@@ -4220,19 +5242,12 @@ public class ForegroundServiceTest {
     return (int) method.invoke(shadowService);
   }
 
-  /**
-   * Populates the service's private static tracking fields directly, simulating the post-START
-   * state that onTimeout expects to observe. Using reflection here (rather than running a full
-   * START first) keeps the onTimeout tests SDK-independent — the START path would trip the API 34+
-   * manifest-type check, but onTimeout itself is sdk-agnostic because its body only uses pre-API-34
-   * primitives.
-   */
-  private static void seedActiveForegroundServiceState(String id) throws Exception {
-    ForegroundService.mCurrentNotificationId = id;
-    ForegroundService.mCurrentForegroundServiceType = 1;
-    setPrivateStatic("mCurrentNotificationBundle", buildNotificationBundle(id));
-    setPrivateStatic("mCurrentNotification", buildNotification());
-    setPrivateStatic("mCurrentHashCode", id.hashCode());
+  // Exercise timeout against an actual successful START, including its lifecycle authority.
+  private static void seedActiveForegroundServiceState(
+      ForegroundService service, String id, int startId, int type) throws Exception {
+    createChannel();
+    declareForegroundServiceTypes(type);
+    service.onStartCommand(buildStartIntent(id, id.hashCode(), "FGS test", type), 0, startId);
   }
 
   private static void setPrivateStatic(String name, Object value) throws Exception {

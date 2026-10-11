@@ -6,6 +6,12 @@ spec = importlib.util.spec_from_file_location('driver82', ROOT / 'scripts/smoke-
 d = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(d)
 
+
+def git_provenance82():
+    import subprocess
+    head=subprocess.check_output(['git','--no-replace-objects','rev-parse','--verify','HEAD^{commit}'],cwd=ROOT,text=True).strip()
+    return dict(approvedBaseline=d.APPROVED_BASELINE,effectiveHead=head,head=head)
+
 class DriverTests(unittest.TestCase):
     def test_marker_provenance(self):
         line = '100.1 123 456 I ReactNativeJS: ISSUE82:START_REQUESTED {"correlationId":"run","attemptId":"run:1:n","notificationId":"issue82-fgs-run-1-n","processRunId":"p","appState":"background","fgsType":1,"smokeScenario":"issue82-datasync-budget"}'
@@ -90,22 +96,21 @@ class ExecutionCleanupTests(unittest.TestCase):
                 base=Path(folder); apk=base/'fake.apk'
                 with zipfile.ZipFile(apk,'w') as archive:
                     archive.writestr('assets/index.android.bundle',b'issue82-datasync-budget')
-                    archive.writestr('classes.dex',b'Tracked START PROMOTION_DENIED')
+                    archive.writestr('classes.dex',b'Tracked START PROMOTION_DENIED Foreground timeout (startId=, demotion=')
                 commands=[]
                 class FakeEvidence(d.Evidence):
                     def services(self): return d.service('ACTIVITY MANAGER SERVICES (dumpsys activity services)\n  (nothing)\n')
                     value=original
                     def run(self,args,**kw):
                         commands.append(tuple(args))
-                        if args[:3]==['git','rev-parse','HEAD']: return d.HEAD+'\n'
-                        if args[:2]==['git','branch']: return 'main\n'
-                        if args[:2]==['git','status']: return 'same status\n'
+                        if args[0]=='git': return super().run(args,**kw)
                         if 'badging' in args: return "package: name='com.notifeeexample'\ntargetSdkVersion:'36'"
                         if 'xmltree' in args: return 'name="app.notifee.core.ForegroundService"\nexported=false\nforegroundServiceType=0x00000001'
                         return ''
                     def adb(self,*args,**kw):
                         commands.append(args)
                         if args==('shell','cat','/proc/sys/kernel/random/boot_id'): return 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                        if args==('shell','pidof','system_server'): return '1000'
                         if args==('shell','getprop','ro.build.version.sdk'): return '37'
                         if args==('shell','getprop','ro.build.fingerprint'): return 'fingerprint'
                         if args[:3]==('shell','dumpsys','package'): return 'appId=11794'
@@ -127,7 +132,7 @@ class ExecutionCleanupTests(unittest.TestCase):
                         if str(path).endswith(rel): return hash_value
                     return 'hash'
                 paths=d.SOURCE_PATHS
-                gate=base/'gate.json';gate.write_text(json.dumps(dict(mode='feasibility',verdict='PASS',serial='fake',bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',uid=11794,fingerprint='fingerprint',apkHash='hash',sourceHashes={p:'hash' for p in paths})))
+                gate=base/'gate.json';gate.write_text(json.dumps(dict(**git_provenance82(),mode='feasibility',verdict='PASS',serial='fake',bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',uid=11794,fingerprint='fingerprint',apkHash='hash',sourceHashes={p:d.FROZEN.get(p,'hash') for p in paths})))
                 args=Namespace(output=base/'evidence',serial='fake',apk=apk,mode='full',authorize_budget_change=True,feasibility_report=gate,observation_seconds=60,manual_actions=False,post_top_recovery=False)
                 with patch.object(d,'Evidence',FakeEvidence), patch.object(d,'sha',mock_sha):
                     self.assertEqual(d.execute(args),2)
@@ -200,14 +205,13 @@ class Fake(d.Evidence):
  def services(self):return d.service('ACTIVITY MANAGER SERVICES (dumpsys activity services)\n  (nothing)\n')
  def process_identity(self,pid):return dict(pid=pid,package=d.PACKAGE,processName=d.PACKAGE,uid=self.uid,bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',starttime='50',birthEpochUpper=90)
  def run(self,args,**kw):
-  if args[:3]==['git','rev-parse','HEAD']:return d.HEAD
-  if args[:2]==['git','branch']:return 'main'
-  if args[:2]==['git','status']:return 'unchanged'
+  if args[0]=='git':return super().run(args,**kw)
   if 'badging' in args:return "package: name='com.notifeeexample'\ntargetSdkVersion:'36'"
   if 'xmltree' in args:return 'name="app.notifee.core.ForegroundService"\nexported=false\nforegroundServiceType=0x00000001'
   return ''
  def adb(self,*args,**kw):
   if args==('shell','cat','/proc/sys/kernel/random/boot_id'):return 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  if args==('shell','pidof','system_server'):return '1000'
   if args==('shell','getprop','ro.build.version.sdk'):return '36'
   if args==('shell','getprop','ro.build.fingerprint'):return 'device'
   if args[:3]==('shell','dumpsys','package'):return 'appId=11794'
@@ -230,7 +234,7 @@ class Fake(d.Evidence):
   def mark(t,name,a,**extra):
    data=dict(smokeScenario='issue82-datasync-budget',correlationId=c,fgsType=1,attempt=a,attemptId=f'{c}:{a}:n{a}',notificationId=f'issue82-fgs-{c}-{a}-n{a}',processRunId='process',appState='background',**extra)
    return f'{t}.0 123 2 I ReactNativeJS: ISSUE82:{name} '+json.dumps(data)
-  raw='\n'.join(['102.0 123 2 E NOTIFEE: Foreground service timed out (startId=1, type=1)',mark(103,'FG_TIMEOUT_OBSERVED',1,eventType=9,detail=dict(fgsType=1,startId=1)),mark(103,'NEXT_ATTEMPT_READY',2),mark(104,'BACKGROUND_ACTION_RECEIVED',2,action='issue82-start',source='background-handler'),mark(104,'START_REQUESTED',2),f'105.0 123 2 W NOTIFEE: Tracked START PROMOTION_DENIED (cause=UNKNOWN, requestId=aaaa-1111, notificationId=issue82-fgs-{c}-2-n2, api=36, type=1, generation=0, runGeneration=1, startId=1, flags=0, stop=accepted)', '105.0 123 2 W NOTIFEE: android.app.ForegroundServiceStartNotAllowedException: Time limit already exhausted for foreground service type dataSync','105.0 123 2 W NOTIFEE: at android.app.Service.startForeground(Service.java:1)','104.0 1000 2 I am_create_service: [0,255,app.notifee.core.ForegroundService,11794,123]','106.0 1000 2 I am_proc_died: [0,123,com.notifeeexample,10,0]','107.0 1000 2 I am_proc_start: [0,123,11794,com.notifeeexample,service,com.notifeeexample/app.notifee.core.ReceiverService]'])
+  raw='\n'.join(['102.0 1000 2 E ActivityManager: FGS (dataSync) timed out: ServiceRecord{abc u0 com.notifeeexample/app.notifee.core.ForegroundService}','102.0 123 2 E NOTIFEE: Foreground timeout (startId=1, type=1, runGeneration=1, demotion=returned, stop=accepted).',mark(103,'FG_TIMEOUT_OBSERVED',1,eventType=9,detail=dict(fgsType=1,startId=1,notification=dict(id=f'issue82-fgs-{c}-1-n1',data=dict(correlationId=c,attemptId=f'{c}:1:n1',role='fgs')))),mark(103,'NEXT_ATTEMPT_READY',2),mark(104,'BACKGROUND_ACTION_RECEIVED',2,action='issue82-start',source='background-handler'),mark(104,'START_REQUESTED',2),f'105.0 123 2 W NOTIFEE: Tracked START PROMOTION_DENIED (cause=UNKNOWN, requestId=aaaa-1111, notificationId=issue82-fgs-{c}-2-n2, api=36, type=1, generation=0, runGeneration=1, startId=1, flags=0, stop=accepted)', '105.0 123 2 W NOTIFEE: android.app.ForegroundServiceStartNotAllowedException: Time limit already exhausted for foreground service type dataSync','105.0 123 2 W NOTIFEE: at android.app.Service.startForeground(Service.java:1)','104.0 1000 2 I am_create_service: [0,255,app.notifee.core.ForegroundService,11794,123]','106.0 1000 2 I am_proc_died: [0,123,com.notifeeexample,10,0]','107.0 1000 2 I am_proc_start: [0,123,11794,com.notifeeexample,service,com.notifeeexample/app.notifee.core.ReceiverService]'])
   return raw if getattr(self,'second',False) else '\n'.join(line for line in raw.splitlines() if float(line.split()[0])<104)
 def arm(e,c):e.c=c;e.negative_since=100
 
@@ -250,9 +254,9 @@ class ExecuteLifetimeTests(unittest.TestCase):
             base=Path(folder); apk=base/'fake.apk'; Fake.apk=apk
             with zipfile.ZipFile(apk,'w') as z:
                 z.writestr('assets/index.android.bundle','issue82-datasync-budget')
-                z.writestr('classes.dex','Tracked START PROMOTION_DENIED')
+                z.writestr('classes.dex','Tracked START PROMOTION_DENIED Foreground timeout (startId=, demotion=')
             source={p:d.sha(ROOT/p) for p in d.SOURCE_PATHS}
-            gate=base/'gate.json'; gate.write_text(json.dumps(dict(mode='feasibility',verdict='PASS',serial='fake',bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',uid=11794,fingerprint='device',apkHash=d.sha(apk),sourceHashes=source)))
+            gate=base/'gate.json'; gate.write_text(json.dumps(dict(**git_provenance82(),mode='feasibility',verdict='PASS',serial='fake',bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',uid=11794,fingerprint='device',apkHash=d.sha(apk),sourceHashes=source)))
             args=Namespace(output=base/'out',serial='fake',mode='full',apk=apk,observation_seconds=60,authorize_budget_change=True,feasibility_report=gate,post_top_recovery=False,manual_actions=True)
             with patch.object(d,'Evidence',Fake), patch.object(d,'arm',arm), patch.object(d,'positive',positive), patch.object(d,'start_action',start_action_phase), patch.object(d,'tap',lambda *a:None), patch.object(d,'cleanup_control',lambda *a:None), patch.object(d.time,'monotonic',monotonic), patch.object(d.time,'sleep',lambda *a:None):
                 code=d.execute(args)
@@ -417,7 +421,7 @@ class AdversarialAuditTests(unittest.TestCase):
         self.assertEqual(d.crash_attribution(raw,'123')['verdict'],'INCONCLUSIVE')
 
 
-def execute_case(kind, *, foreign_logs=False, fault=None):
+def execute_case(kind, *, foreign_logs=False, fault=None, mode='full'):
     cleanup_calls=[]
     collector_stopped=[]
     evidence_raw=d.Evidence.raw
@@ -431,6 +435,10 @@ def execute_case(kind, *, foreign_logs=False, fault=None):
             return identity82()
         def raw(self):
             raw=super().raw()
+            if mode=='timeout-only':
+                if kind=='missing_framework':raw='\n'.join(x for x in raw.splitlines() if 'FGS (dataSync) timed out' not in x)
+                if kind=='failed_demotion':raw=raw.replace('demotion=returned','demotion=failed')
+                if kind=='timeout_crash':raw+='\n103.5 123 1 E AndroidRuntime: FATAL EXCEPTION: main\n103.6 123 1 E AndroidRuntime: ForegroundServiceDidNotStopInTimeException app.notifee.core.ForegroundService'
             if kind!='reuse':
                 raw='\n'.join(line for line in raw.splitlines() if 'am_proc_died:' not in line and 'am_proc_start:' not in line)
             if kind=='late_death' and self.samples>=5:
@@ -466,10 +474,10 @@ def execute_case(kind, *, foreign_logs=False, fault=None):
     with tempfile.TemporaryDirectory() as folder:
         base=Path(folder);apk=base/'fake.apk';ExecutionFake.apk=apk
         with zipfile.ZipFile(apk,'w') as z:
-            z.writestr('assets/index.android.bundle','issue82-datasync-budget');z.writestr('classes.dex','Tracked START PROMOTION_DENIED')
+            z.writestr('assets/index.android.bundle','issue82-datasync-budget');z.writestr('classes.dex','Tracked START PROMOTION_DENIED Foreground timeout (startId=, demotion=')
         paths=d.SOURCE_PATHS
-        gate=base/'gate.json';gate.write_text(json.dumps(dict(mode='feasibility',verdict='PASS',serial='fake',bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',uid=11794,fingerprint='device',apkHash=d.sha(apk),sourceHashes={p:d.sha(ROOT/p) for p in paths})))
-        args=Namespace(output=base/'out',serial='fake',mode='full',apk=apk,observation_seconds=60,authorize_budget_change=True,feasibility_report=gate,post_top_recovery=False,manual_actions=True)
+        gate=base/'gate.json';gate.write_text(json.dumps(dict(**git_provenance82(),mode='feasibility',verdict='PASS',serial='fake',bootId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',uid=11794,fingerprint='device',apkHash=d.sha(apk),sourceHashes={p:d.sha(ROOT/p) for p in paths})))
+        args=Namespace(output=base/'out',serial='fake',mode=mode,apk=apk,observation_seconds=60,authorize_budget_change=True,feasibility_report=gate,post_top_recovery=mode=='timeout-only',manual_actions=True)
         with patch.object(d,'Evidence',ExecutionFake),patch.object(d,'arm',arm),patch.object(d,'positive',positive), patch.object(d,'start_action',start_action_phase),patch.object(d,'tap',lambda *a:None),patch.object(d,'cleanup_control',cleanup),patch.object(d.time,'monotonic',monotonic),patch.object(d.time,'sleep',lambda *a:None):
             code=d.execute(args)
         report=json.loads((args.output/'report.json').read_text())
@@ -710,7 +718,7 @@ class ReceiptEndToEndTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as folder:
                 base=Path(folder);apk=base/'fake.apk';Linked.apk=apk
                 with zipfile.ZipFile(apk,'w') as z:
-                    z.writestr('assets/index.android.bundle','issue82-datasync-budget');z.writestr('classes.dex','Tracked START PROMOTION_DENIED')
+                    z.writestr('assets/index.android.bundle','issue82-datasync-budget');z.writestr('classes.dex','Tracked START PROMOTION_DENIED Foreground timeout (startId=, demotion=')
                 args=Namespace(output=base/'out',serial='fake',mode='feasibility',apk=apk,observation_seconds=60,authorize_budget_change=False,feasibility_report=None,post_top_recovery=False,manual_actions=True)
                 with patch.object(d,'Evidence',Linked),patch.object(d,'arm',arm_link),patch.object(d,'tap',tap_link),patch.object(d,'submit_receipt',reply_link),patch.object(d.time,'monotonic',monotonic),patch.object(d.time,'sleep'):
                     code=d.execute(args)
@@ -923,7 +931,6 @@ class ForeignLifecycleExecutionRegressionTests(unittest.TestCase):
                     self.assertIn('AMS UNKNOWN' if fault=='ams_unknown' else 'collector exited',report['error'])
                     for lane in ['R3','R4']: self.assertNotEqual(report['lanes'][lane],'PASS')
 
-if __name__ == '__main__': unittest.main()
 
 class BoundNonTargetRegressionTests(unittest.TestCase):
     def test_real_bound_firebase_is_valid_without_target(self):
@@ -1032,3 +1039,348 @@ class ShadeSettlementTests(unittest.TestCase):
         with patch.object(d.time,'sleep',lambda _:None):d.tap(e,Namespace(manual_actions=False),'run','Start dataSync FGS')
         self.assertEqual([c for c in e.calls if c[:3]==('shell','input','tap')],[('shell','input','tap','20','30')])
         self.assertEqual(e.reads,2)
+
+
+class SliceATimeoutTests(unittest.TestCase):
+    def fixture(self):
+        request=dict(request82(),attempt=1,attemptId='run:1:n1',notificationId='issue82-fgs-run-1-n1',epoch=100)
+        pos=dict(request=request,service=dict(identity='abc',startId='1'))
+        framework='200.0 1000 2 E ActivityManager: FGS (dataSync) timed out: ServiceRecord{abc u0 com.notifeeexample/app.notifee.core.ForegroundService}'
+        native='200.1 123 2 E NOTIFEE: (ForegroundService): Foreground timeout (startId=1, type=1, runGeneration=7, demotion=returned, stop=accepted).'
+        return pos,framework+'\n'+native
+
+    def test_exact_slice_a_binding_includes_frozen_sources(self):
+        self.assertEqual(d.APPROVED_BASELINE,'4af99ca9eb041e12b1d6c2516d7f623306b01f47')
+        for path,expected in d.FROZEN.items():
+            self.assertEqual(d.sha(ROOT/path),expected)
+            self.assertIn(path,d.SOURCE_PATHS)
+
+    def test_timeout_requires_framework_and_native_matching_owned_record(self):
+        pos,raw=self.fixture()
+        proof=d.timeout_proof(raw,pos,'1000')
+        self.assertEqual(proof['stop'],'accepted');self.assertEqual(proof['demotion'],'returned')
+        for changed in [raw.splitlines()[0],raw.splitlines()[1],raw.replace('abc','def'),
+                        raw.replace(' 1000 ',' 999 '),raw.replace(' 123 ',' 999 '),
+                        raw.replace('startId=1','startId=2'),raw.replace('type=1','type=128'),
+                        raw.replace('200.0','99.0'),raw.replace('200.1','199.0')]:
+            self.assertIsNone(d.timeout_proof(changed,pos,'1000'))
+        for changed in [raw+'\n'+raw.splitlines()[1],raw.replace('demotion=returned','demotion=failed'),
+                        raw.replace('stop=accepted','stop=refused'),raw.replace('stop=accepted','stop=deferred')]:
+            with self.assertRaises(RuntimeError):d.timeout_proof(changed,pos,'1000')
+
+    def test_feasibility_rebinding_cannot_reuse_old_apk_or_sources(self):
+        report=dict(**git_provenance82(),serial='fake',fingerprint='device',bootId='boot',uid=11794,apkHash='new',sourceHashes={'frozen':'new'})
+        gate=dict(report,mode='feasibility',verdict='PASS')
+        d.require_feasibility(gate,report)
+        for field in report:
+            stale=dict(gate);stale[field]='old'
+            with self.assertRaises(RuntimeError):d.require_feasibility(stale,report)
+
+    def test_timeout_only_receipt_covers_only_promoted_timed_out_ledger(self):
+        e,q,ms=ReceiptIssuanceTests().fixture()
+        pos,raw=self.fixture()
+        proof=dict(native=[raw.splitlines()[1]],framework=[raw.splitlines()[0]],demotion='returned',stop='accepted',startId='1',type=1)
+        e.proof_chain[0].update(terminal='timeout',timeout=proof)
+        q['diagnostic']['ledger'][0].update(terminal='timeout',stopResolved=False)
+        q.update(attempt=2,attemptId='run:2:next',notificationId='issue82-fgs-run-2-next')
+        body=d.receipt82.certify(e,'run',q,ms,'timeout-only')
+        self.assertEqual(len(body['proofs']),1);self.assertEqual(body['proofs'][0]['terminal'],'timeout')
+        for fault in ['framework','native','promotion','extra-attempt','unknown-mode']:
+            with self.subTest(fault=fault):
+                e2,q2,ms2=ReceiptIssuanceTests().fixture()
+                e2.proof_chain[0].update(terminal='timeout',timeout=dict(proof))
+                q2['diagnostic']['ledger'][0].update(terminal='timeout')
+                q2.update(attempt=2,attemptId='run:2:next')
+                if fault in ['framework','native']:e2.proof_chain[0]['timeout'][fault]=[]
+                if fault=='promotion':e2.proof_chain[0]['promotion']=False
+                if fault=='extra-attempt':q2['attempt']=3
+                with self.assertRaises(RuntimeError):d.receipt82.certify(e2,'run',q2,ms2,'unknown' if fault=='unknown-mode' else 'timeout-only')
+
+    def test_timeout_only_execute_recovery_and_causal_failures(self):
+        for kind in ['stable','missing_framework','failed_demotion','timeout_crash']:
+            with self.subTest(kind=kind):
+                code,report=execute_case(kind,mode='timeout-only')
+                self.assertNotIn('deniedRequest',report)
+                if kind=='stable':
+                    self.assertEqual(code,0,report)
+                    self.assertEqual(report['lanes']['R5'],'PASS')
+                    self.assertEqual(report['timeoutObservation']['seconds'],60)
+                else:
+                    self.assertEqual(code,2,report)
+                    self.assertNotEqual(report['verdict'],'PASS')
+                    if kind in ['failed_demotion','timeout_crash']:self.assertEqual(report['verdict'],'FAIL',report)
+
+    def test_actual_ts_timeout_receipt_cleanup(self):
+        import subprocess
+        bridge=subprocess.Popen(['node','apps/smoke/__tests__/issue82HostFixture.cjs'],cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+        def app(**command):
+            bridge.stdin.write(json.dumps(command)+'\n');bridge.stdin.flush()
+            state=json.loads(bridge.stdout.readline())
+            self.assertNotIn('error',state)
+            return state
+        e,_,_=ReceiptIssuanceTests().fixture()
+        signer=d.receipt82.ReceiptSigner(e.receipt_signer.context)
+        e.receipt_signer=signer
+        try:
+            app(op='arm',correlation='run',session=signer.context)
+            state=app(op='action',action='issue82-start')
+            request=next(dict(x,epoch=x['loggedAt']/1000,logPid='123') for x in state['markers'] if x['marker']=='START_REQUESTED')
+            state=app(op='timeout',startId=1,fgsType=1)
+            self.assertEqual(sum(x['marker']=='FG_TIMEOUT_OBSERVED' for x in state['markers']),1)
+            state=app(op='action',action='issue82-stop')
+            e.now_device=lambda:state['now']/1000
+            q=next(dict(x,epoch=x['loggedAt']/1000,logPid='123') for x in reversed(state['markers']) if x['marker']=='QUIESCED')
+            ms=[dict(x,epoch=x['loggedAt']/1000,logPid='123') for x in state['markers']]
+            pos,raw=self.fixture()
+            e.proof_chain=[dict(request=request,processIdentity=identity82(),runner=request,promotion=True,terminal='timeout',
+                service=dict(identity='abc',startId='1',pid='123',user='0',foreground=True,type=1,notificationId=str(d.java_hash(request['notificationId']))),
+                timeout=d.timeout_proof(raw,pos,'1000'))]
+            body=d.receipt82.certify(e,'run',q,ms,'timeout-only')
+            state=app(op='action',action='issue82-cleanup',input=signer.sign(body))
+            self.assertEqual(state['notifications'],[],state['markers'][-1])
+            self.assertTrue(any(x['marker']=='CLEANUP' and x.get('certified') for x in state['markers']))
+        finally:
+            signer.close();bridge.terminate();bridge.wait(timeout=5);bridge.stdin.close();bridge.stdout.close()
+
+
+class PostCommitBindingTests(unittest.TestCase):
+    """Real commits in a disposable clone; execute stops before any Android operation."""
+    baseline = '4af99ca9eb041e12b1d6c2516d7f623306b01f47'
+    allowed = {
+        *d.FROZEN,
+        'apps/smoke/ISSUE82_DATASYNC_BUDGET.md',
+        'apps/smoke/__tests__/issue82DataSyncBudgetHarness.test.ts',
+        'apps/smoke/__tests__/issue82HostFixture.cjs',
+        'apps/smoke/__tests__/issue82RuntimeDriver.test.py',
+        'apps/smoke/issue82DataSyncBudgetHarness.ts',
+        'scripts/issue82_receipt.py',
+        'scripts/smoke-test-82-android-datasync-budget.py',
+    }
+
+    def setUp(self):
+        import subprocess
+        self.folder = tempfile.TemporaryDirectory(prefix='issue82-genealogy-')
+        self.addCleanup(self.folder.cleanup)
+        self.base = Path(self.folder.name)
+        self.repo = self.base/'repo'
+        subprocess.run(['git','clone','--shared','--quiet',str(ROOT),str(self.repo)],
+                       check=True, capture_output=True)
+        self.git('config','core.hooksPath','/dev/null')
+        self.git('config','commit.gpgsign','false')
+        # Bind the actual approved baseline, including its object identity, not a
+        # synthetic SHA provided by a Python caller. Overlay the approved dirty candidate.
+        self.git('reset','--hard',self.baseline)
+        for path in self.allowed | set(d.SOURCE_PATHS):
+            target = self.repo/path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT/path).read_bytes())
+        # Dist is ignored and remains protected by source hashes, as in the real workspace.
+        self.apk = self.base/'host-fixture.apk'
+        with zipfile.ZipFile(self.apk,'w') as apk:
+            apk.writestr('assets/index.android.bundle',b'issue82-datasync-budget')
+            apk.writestr('classes.dex',b'Tracked START PROMOTION_DENIED Foreground timeout (startId=, demotion=')
+
+    def git(self,*args):
+        import subprocess
+        return subprocess.run(['git',*args], cwd=self.repo, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message):
+        self.git('add','--all')
+        self.git('-c','user.name=Issue82 Host Witness','-c','user.email=issue82@example.invalid',
+                 'commit','--quiet','-m',message)
+        return self.git('rev-parse','HEAD')
+
+    def descendant(self):
+        return self.commit('approved Slice A and diagnostic candidate')
+
+    def preflight(self):
+        class HostOnlyEvidence(d.Evidence):
+            def run(inner,args,**kw):
+                if args[0]=='git': return super().run(args,**kw)
+                if 'badging' in args:
+                    return "package: name='com.notifeeexample'\ntargetSdkVersion:'36'"
+                if 'xmltree' in args:
+                    return 'name="app.notifee.core.ForegroundService"\nexported=false\nforegroundServiceType=0x00000001'
+                raise AssertionError('unexpected host command: '+repr(args))
+            def adb(inner,*args,**kw):
+                raise RuntimeError('HOST_PREFLIGHT_PASSED_NO_ANDROID')
+            def stop_collector(inner): pass
+        output = self.base/('evidence-'+str(len(list(self.base.glob('evidence-*')))))
+        args=Namespace(output=output,serial='host-only',apk=self.apk,mode='feasibility',
+                       authorize_budget_change=False,feasibility_report=None,
+                       observation_seconds=60,manual_actions=False,post_top_recovery=False)
+        with patch.object(d,'ROOT',self.repo), patch.object(d,'Evidence',HostOnlyEvidence):
+            self.assertEqual(d.execute(args),2)  # Host gate only, never an Android PASS.
+        return json.loads((output/'report.json').read_text())
+
+    def admitted(self):
+        report=self.preflight()
+        self.assertEqual(report['error'],'HOST_PREFLIGHT_PASSED_NO_ANDROID',report)
+        return report
+
+    def blocked(self):
+        report=self.preflight()
+        self.assertEqual(report['verdict'],'BLOCKED',report)
+        return report
+
+    def test_w1_current_candidate(self):
+        report=self.admitted()
+        self.assertEqual(report['head'],self.baseline)
+        self.assertEqual(report['frozenHashes'],d.FROZEN)
+
+    def test_w2_authorized_descendant(self):
+        before=self.admitted()
+        first=self.descendant()
+        path=self.repo/'scripts/smoke-test-82-android-datasync-budget.py'
+        path.write_text(path.read_text()+'\n# authorized diagnostic descendant\n')
+        head=self.commit('authorized diagnostic continuation')
+        self.assertNotEqual(head,self.baseline)
+        self.assertEqual(self.git('merge-base',self.baseline,head),self.baseline)
+        report=self.admitted()
+        self.assertEqual(report['effectiveHead'],head)
+        self.assertEqual(report['candidateCommits'],[head,first])
+        self.assertEqual(report['divergence'],dict(ahead=2,behind=0))
+        self.assertNotEqual(report['sourceFingerprint'],before['sourceFingerprint'])
+
+    def test_w3_foreign_delta(self):
+        self.descendant()
+        (self.repo/'foreign.txt').write_text('foreign committed source\n')
+        self.commit('foreign change')
+        self.blocked()
+
+    def test_w4_frozen_drift(self):
+        self.descendant()
+        path=self.repo/next(iter(d.FROZEN))
+        path.write_bytes(path.read_bytes()+b'\n// unauthorized frozen drift\n')
+        self.commit('changed frozen bytes inside allowlist')
+        report=self.blocked()
+        self.assertIn('frozen',report['error'])
+
+    def test_w5_ancestor_and_unrelated_main(self):
+        self.git('checkout','--force','main')
+        self.git('reset','--hard',self.baseline+'^')
+        # Keep frozen/source bytes valid so an ancestry bypass cannot be caught
+        # accidentally by the independent frozen-hash gate instead.
+        for path in self.allowed:
+            (self.repo/path).write_bytes((ROOT/path).read_bytes())
+        report=self.blocked()
+        self.assertIn('ancestry',report['error'])
+        self.git('checkout','--orphan','unrelated')
+        self.git('rm','-rf','.')
+        (self.repo/'foreign.txt').write_text('unrelated root\n')
+        self.commit('unrelated genealogy')
+        self.git('branch','-D','main')
+        self.git('branch','-m','main')
+        self.git('branch','--set-upstream-to','origin/main','main')
+        report=self.blocked()
+        self.assertIn('ancestry',report['error'])
+
+    def test_w6_hidden_intermediate_delta(self):
+        first=self.descendant()
+        foreign=self.repo/'README.md'; original=foreign.read_bytes()
+        foreign.write_bytes(original+b'\nhidden foreign change\n')
+        self.commit('unauthorized intermediate')
+        foreign.write_bytes(original)
+        head=self.commit('revert unauthorized intermediate')
+        self.assertNotIn('README.md',self.git('diff','--name-only',first,head).splitlines())
+        report=self.blocked()
+        self.assertIn('README.md',report['error'])
+
+    def matching(self):
+        report=self.admitted()
+        report.update(serial='host-only',fingerprint='host-device',bootId='host-boot',uid=11794)
+        gate=dict(report,mode='feasibility',verdict='PASS')
+        return gate,report
+
+    def test_w7_incompatible_feasibility(self):
+        gate,report=self.matching()
+        for field in ['apkHash','sourceHashes','serial','fingerprint','bootId','uid','mode','verdict']:
+            with self.subTest(field=field):
+                stale=dict(gate); stale[field]='stale'
+                with self.assertRaisesRegex(RuntimeError,'BLOCKED'):
+                    d.require_feasibility(stale,report)
+
+    def test_w8_matching_feasibility_and_cross_head_fail_closed(self):
+        gate,report=self.matching()
+        d.require_feasibility(gate,report)
+        # Even byte-identical APK/source identities do not authorize cross-HEAD reuse.
+        for changes in [dict(effectiveHead='0'*40,head='0'*40),
+                        dict(approvedBaseline='0'*40),dict(effectiveHead=None),dict(approvedBaseline=None)]:
+            with self.subTest(changes=changes), self.assertRaisesRegex(RuntimeError,'BLOCKED'):
+                d.require_feasibility(dict(gate,**changes),report)
+
+    def test_w9_foreign_dirty_workspace(self):
+        path=self.repo/'README.md'; original=path.read_bytes()
+        path.write_bytes(original+b'\nforeign worktree\n')
+        self.blocked()
+        self.git('add','README.md')
+        self.blocked()
+        # A staged foreign edit hidden by a worktree revert must still be rejected.
+        path.write_bytes(original)
+        self.assertNotIn('README.md',self.git('diff','HEAD','--name-only').splitlines())
+        self.blocked()
+        self.git('reset','HEAD','README.md')
+        (self.repo/'foreign-untracked.txt').write_text('untracked\n')
+        self.blocked()
+
+    def test_w10_report_provenance_and_actual_hashes(self):
+        head=self.descendant()
+        report=self.admitted()
+        self.assertEqual(report['approvedBaseline'],self.baseline)
+        self.assertEqual(report['effectiveHead'],head)
+        self.assertEqual(report['head'],head)
+        self.assertEqual(report['frozenHashes'],{p:d.sha(self.repo/p) for p in d.FROZEN})
+        self.assertEqual(report['sourceHashes'],{p:d.sha(self.repo/p) for p in d.SOURCE_PATHS})
+        self.assertEqual(report['sourceFingerprint'],d.hashlib.sha256(d.receipt82.canonical(report['sourceHashes']).encode()).hexdigest())
+        self.assertEqual(report['apkHash'],d.sha(self.apk))
+        self.assertEqual(report['upstream'],'origin/main')
+        self.assertEqual(report['upstreamHead'],self.baseline)
+
+    def test_merge_is_explicitly_rejected(self):
+        self.descendant()
+        self.git('checkout','-b','side')
+        path=self.repo/'scripts/issue82_receipt.py'
+        path.write_text(path.read_text()+'\n# allowed side change\n')
+        self.commit('side diagnostic change')
+        self.git('checkout','main')
+        self.git('-c','user.name=Issue82 Host Witness','-c','user.email=issue82@example.invalid',
+                 'merge','--no-ff','--quiet','side','-m','ambiguous merge')
+        report=self.blocked()
+        self.assertIn('linear',report['error'])
+
+    def test_real_distinct_heads_with_identical_sources_do_not_reuse_feasibility(self):
+        self.descendant()
+        gate,report=self.matching()
+        self.git('-c','user.name=Issue82 Host Witness','-c','user.email=issue82@example.invalid',
+                 'commit','--allow-empty','--quiet','-m','diagnostic metadata only')
+        next_gate,next_report=self.matching()
+        self.assertNotEqual(report['effectiveHead'],next_report['effectiveHead'])
+        self.assertEqual(report['sourceHashes'],next_report['sourceHashes'])
+        self.assertEqual(report['apkHash'],next_report['apkHash'])
+        with self.assertRaisesRegex(RuntimeError,'BLOCKED'):
+            d.require_feasibility(gate,next_report)
+        d.require_feasibility(next_gate,next_report)
+
+    def test_authorized_bytes_on_another_branch_are_blocked(self):
+        self.descendant()
+        self.git('checkout','-b','another-branch')
+        self.git('branch','--set-upstream-to','origin/main','another-branch')
+        report=self.blocked()
+        self.assertIn('branch/upstream',report['error'])
+
+    def test_foreign_worktree_cannot_hide_behind_index_flags(self):
+        path=self.repo/'README.md'
+        for flag in ['--assume-unchanged','--skip-worktree']:
+            with self.subTest(flag=flag):
+                self.git('update-index',flag,'README.md')
+                try:
+                    path.write_bytes(path.read_bytes()+b'\nhidden foreign worktree bytes\n')
+                    self.assertNotIn('README.md',self.git('diff','--name-only').splitlines())
+                    self.blocked()
+                finally:
+                    self.git('update-index','--no-assume-unchanged','README.md')
+                    self.git('update-index','--no-skip-worktree','README.md')
+                    self.git('checkout','--','README.md')
+
+if __name__ == '__main__': unittest.main()

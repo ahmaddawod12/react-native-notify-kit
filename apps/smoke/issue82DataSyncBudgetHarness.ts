@@ -414,13 +414,26 @@ export function createIssue82Harness(deps: {
         }
         if (action === CLEANUP && c.diagnostic?.phase === 'quiesced' && event.detail.input) {
           const d = c.diagnostic;
+          const first = d.ledger[0];
+          // A real timeout prepares an unused token; the signed proof still covers
+          // the original sole dispatched obligation, never a fabricated second START.
+          const unusedTimeoutToken =
+            d.ledger.length === 1 &&
+            c.attempt === 2 &&
+            first.dispatch === 'resolved' &&
+            first.terminal === 'timeout' &&
+            first.stopResolved === false &&
+            first.processRunId === processRunId &&
+            first.attemptId.startsWith(`${c.correlationId}:1:`) &&
+            first.notificationId ===
+              `issue82-fgs-${c.correlationId}-1-${first.attemptId.split(':')[2]}`;
           if (
             d.consumerRunId !== processRunId ||
-            d.ledger.length !== c.attempt ||
+            (!unusedTimeoutToken && d.ledger.length !== c.attempt) ||
             d.ledger.some(
               (entry, i) => !entry.attemptId.startsWith(`${c.correlationId}:${i + 1}:`),
             ) ||
-            d.ledger[d.ledger.length - 1]?.attemptId !== attemptId(c) ||
+            (!unusedTimeoutToken && d.ledger[d.ledger.length - 1]?.attemptId !== attemptId(c)) ||
             s.fgs.length
           ) {
             log('BLOCKED', c, { reason: 'quiescence_or_ledger_unproven' });
