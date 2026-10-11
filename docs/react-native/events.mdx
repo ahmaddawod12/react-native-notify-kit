@@ -128,6 +128,18 @@ once complete.
 
 > **iOS delivery events.** `DELIVERED` is emitted to `onForegroundEvent` for **all** Notify Kit-owned notifications presented while the app is in foreground — immediate `displayNotification` calls, trigger notifications that fire in foreground, and `handleFcmMessage` foreground displays. Trigger notifications that fire while the app is in background or killed do **not** emit `DELIVERED` on iOS (platform limitation — `willPresentNotification:` only fires in foreground and iOS provides no equivalent callback for background-presented local notifications). Android emits `DELIVERED` unconditionally in both cases. If you need delivery confirmation for background trigger notifications on iOS, query `getDisplayedNotifications()` after the app returns to foreground.
 
+## Android foreground service timeouts
+
+`EventType.FG_TIMEOUT = 9` is Android-only and is attempted best-effort by the native foreground service timeout path.
+Its `EventDetail` can include `notification` when available, optional `startId`, and optional `fgsType`; the API 34
+single-parameter timeout callback can report `fgsType = -1`.
+
+Use the foreground listener while the app is in view and the single background handler registered early in `index.js`
+for background/headless delivery, as described above. A background handler must return a Promise and cannot update the UI.
+JavaScript delivery, including exactly-once delivery, is not guaranteed if the process is suspended or terminated.
+The event does not acknowledge Android service teardown, guarantee cancellation of JavaScript work, or authorize a new
+START. See [Handling FG_TIMEOUT](/react-native/android/foreground-service#handling-fg_timeout) for the example and budget guidance.
+
 ## App open events
 
 If user interaction on a notification has caused your application to open, you may want to obtain the notification which triggered the app to open (e.g. a specific chat message). Call `getInitialNotification()` early in your React lifecycle to retrieve that notification.
