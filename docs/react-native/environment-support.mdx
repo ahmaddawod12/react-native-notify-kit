@@ -7,28 +7,30 @@ description: Understand how the package integrates with the various development 
 
 The table below lists the current supported environments for `react-native-notify-kit` and the repository's current development target:
 
-| Environment                                           | Supported             | Notes                                                                        |
-| ----------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------- |
-| React Native                                          | >= 0.73.0             | **New Architecture required.** Current development target: 0.85.3.           |
-| Android APIs                                          | Android 7.0+ (API 24) | Library module baseline: `minSdk = 24`, `compileSdk = 35`, `targetSdk = 35`. |
-| iOS version                                           | 15.1+                 | Matches the `RNNotifee.podspec` platform target.                             |
-| [Hermes Support](https://reactnative.dev/docs/hermes) | Yes                   | Default on modern React Native.                                              |
-| Packagers                                             | Metro                 | Untested on non-standard packagers.                                          |
+| Environment                                           | Supported             | Notes                                                                                                          |
+| ----------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| React Native                                          | >= 0.73.0             | **New Architecture required.** Current development target: 0.85.3.                                             |
+| Android APIs                                          | Android 7.0+ (API 24) | Library module baseline: `minSdk = 24`, `targetSdk = 35`; host compile SDK inherited with minimum/fallback 35. |
+| iOS version                                           | 15.1+                 | Matches the `RNNotifee.podspec` platform target.                                                               |
+| [Hermes Support](https://reactnative.dev/docs/hermes) | Yes                   | Default on modern React Native.                                                                                |
+| Packagers                                             | Metro                 | Untested on non-standard packagers.                                                                            |
 
 ## Additional Requirements
 
 - **Xcode**: 14.3 or higher (required by iOS 15.1 deployment target + modern React Native).
 - **Java**: JDK 17+ for Android builds. JDK 17 and JDK 21 are validated baselines. Newer JDKs may work when supported by the consumer Android toolchain. JDK 8 and 11 are **not** supported.
-- **Android Gradle Plugin**: 8.2.2 or higher for the library/module baseline.
-- **Gradle**: 8.x for the library/module baseline.
+- **Android Gradle Plugin**: API 35 and WorkManager 2.11.1 require at least 8.6.0; higher compile SDKs and React Native versions can require newer AGP.
+- **Gradle**: select the version supported by the chosen AGP and React Native template. AGP 8.6 requires at least Gradle 8.7; Gradle 8.x is not a universal requirement.
 - **Node**: >= 22 (matches the repository's toolchain).
 - **Yarn**: 4.6.0 (matches the repository's package manager).
 
 ## Android Baselines and Validation Targets
 
-- **Library/module baseline**: `minSdk = 24`, `compileSdk = 35`, `targetSdk = 35`, Android Gradle Plugin 8.2.2 or higher, and Gradle 8.x.
-- **Current bare smoke validation target**: the React Native 0.85.3 bare smoke app currently uses `compileSdk = 36`, `targetSdk = 36`, and Gradle wrapper 9.3.1.
-- **Consumer app guidance**: do not treat the bare smoke app's SDK 36 or Gradle 9.3.1 values as universal NotifyKit installation requirements. Follow the React Native app template, Android Gradle Plugin compatibility, and Android platform requirements for the features your app enables.
+- **Library/module baseline**: `minSdk = 24`, `targetSdk = 35`, Java/Kotlin JVM target 17. `compileSdk` is the higher of 35 and a usable `rootProject.ext.compileSdkVersion`; SDK 37 is not required. The library does not change host SDK properties. It explicitly keeps `aarMetadata.minCompileSdk = 35` so AGP 9 does not raise the AAR consumer minimum to the inherited compile SDK; dependencies may impose their own minimums.
+- **Configuration convention**: positive integer API levels, equivalent decimal strings and stable `android-N` identifiers are accepted within the 32-bit integer range. Missing property: fallback 35. Present but unusable property: fallback 35 with a warning. Fractions, booleans, null, overflow and previews are rejected. Hosts using only the app DSL, version catalogs or convention plugins must expose the root extra property before library evaluation to select a higher SDK. Build/toolchain/SDK errors are not swallowed.
+- **Toolchain selection**: API 35 requires AGP 8.6.0 or newer; API 36 requires 8.9.1 or newer; API 37 requires 9.1.1 or newer. Follow the [official AGP/SDK and AGP/Gradle tables](https://developer.android.com/build/releases/about-agp) plus your React Native and dependency requirements.
+- **Current bare smoke target**: React Native 0.85.3, app `compileSdk = 36`, app `targetSdk = 36`, Gradle wrapper 9.3.1; AGP 8.12.0 is provided by the installed RN Gradle plugin. These fixture values do not establish compatibility for every consumer. RN 0.88 has not been build-validated here.
+- **Standalone limitation**: the legacy classpath now declares AGP 8.6.0, but the library folder alone lacks the plugin/consumer wiring needed for a complete standalone build. Standalone support is not claimed; use a configured React Native consumer.
 
 ## Platforms
 

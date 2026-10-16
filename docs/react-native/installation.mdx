@@ -19,16 +19,14 @@ yarn add react-native-notify-kit
 
 ### 2a. Android API versions
 
-The library Android module is built against modern Android SDK levels. Consumer apps should follow the SDK values required by their React Native app template and any Android platform APIs they enable. As the current library baseline, do not use values lower than:
+The library keeps `minSdk = 24` (Android 7.0) and `targetSdk = 35`. Its **compile SDK baseline and fallback are 35**. During configuration it reads `rootProject.ext.compileSdkVersion` and uses the higher of that value and 35. For example, host values 35, 36 and 37 select library compile SDKs 35, 36 and 37; host 34 selects library 35 without changing the host. This does not make an app with compile SDK 34 build-compatible with dependencies that require 35.
 
-- `compileSdkVersion` = **35**
-- `targetSdkVersion` = **35**
-- `minSdkVersion` = **24** (Android 7.0)
+For a conventional React Native host, expose the SDK selected for your app before the library is evaluated:
 
 ```gradle
 buildscript {
   ext {
-    compileSdkVersion = 35
+    compileSdkVersion = 35 // Use a higher SDK when your app/toolchain requires it.
     targetSdkVersion = 35
     minSdkVersion = 24
     ...
@@ -37,16 +35,19 @@ buildscript {
 }
 ```
 
-Your Android project may fail to build with missing symbols if you use older values, because the library is compiled against API 35.
+Positive integer API levels in the 32-bit integer range, decimal strings such as `"36"`, and stable identifiers such as `"android-36"` are accepted. Numeric values must be exactly integral; fractions are never truncated. A missing property silently selects 35. Present but unusable values (including `null`, booleans, previews and overflow) select 35 with a diagnostic warning. SDK installation, AGP and compilation errors still fail the build.
 
-The repository's current bare smoke app validation for React Native 0.85.3 uses `compileSdkVersion = 36`, `targetSdkVersion = 36`, and Gradle wrapper 9.3.1. Those values describe the fixture target and are not declared here as universal installation requirements for every consumer app.
+This convention does not discover SDK values held only in the app's Android DSL, version catalogs, convention plugins or preview configuration. Non-standard hosts must expose a usable `rootProject.ext.compileSdkVersion` before this module is evaluated to select a higher SDK. The library does not mutate host properties or require SDK 37. It explicitly sets `aarMetadata.minCompileSdk = 35` to preserve the dependency baseline even with [AGP 9, which otherwise defaults the AAR consumer minimum to the compile SDK](https://developer.android.com/build/releases/agp-9-0-0-release-notes#behavior-changes). Compiling with 37 does not by itself require consumers to compile with 37; dependencies may impose their own minimums.
+
+The repository's React Native 0.85.3 bare smoke app is configured with `compileSdkVersion = 36`, `targetSdkVersion = 36`, and Gradle wrapper 9.3.1. These are the smoke target's values, not universal consumer requirements. Inheriting a higher SDK does not certify a React Native version; RN 0.88 has not been build-validated here.
 
 ### 2b. Gradle versions
 
-- **Android Gradle Plugin**: 8.2.2 or higher for the library/module baseline
-- **Gradle**: 8.x for the library/module baseline
+Android API 35 and the published AAR metadata of WorkManager 2.11.1 require **AGP 8.6.0 or newer**. AGP 8.6 requires **Gradle 8.7 or newer**. This is a lower bound for that baseline, not a guarantee for every React Native/Gradle/AGP combination.
 
-These match the versions the library is built with (see [packages/react-native/android/build.gradle](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/android/build.gradle)). Consumer apps should also follow the Gradle and Android Gradle Plugin versions expected by their React Native app template. Older Gradle/AGP combinations can fail with resource-packaging errors.
+Higher inherited SDKs require newer tools: API 36 requires AGP 8.9.1 or newer; API 37 requires AGP 9.1.1 or newer. Select the matching Gradle version from the [official Android compatibility tables](https://developer.android.com/build/releases/about-agp), and satisfy your React Native template and dependency requirements as well. Neither AGP 8.2.2 nor an unspecified Gradle 8.x is a supported universal baseline. The library does not update the consumer's AGP, Gradle wrapper or Kotlin version.
+
+The legacy standalone classpath declaration is aligned to AGP 8.6.0, but `packages/react-native/android` is **not a complete supported standalone build**: its settings do not wire the required plugins or a consumer `:app` project. Validate the module through a configured React Native consumer; changing this declaration alone does not establish standalone support.
 
 ### 2c. Java version
 

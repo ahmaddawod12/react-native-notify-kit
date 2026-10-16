@@ -525,7 +525,7 @@ This fork is a complete migration to React Native's **New Architecture**:
 - **Android bridge rewritten in Kotlin** (original was Java)
 - **iOS bridge uses Objective-C++** with `NativeNotifeeModuleSpecJSI` TurboModule conformance
 - **Minimum React Native >=0.73**, development target **0.85.3**
-- **Toolchain**: Yarn 4, Node 22+, JDK 17+ for Android builds, library Android module compileSdk/targetSdk 35
+- **Toolchain**: Yarn 4, Node 22+, JDK 17+ for Android builds. Library `minSdk = 24` and `targetSdk = 35`; `compileSdk` inherits a usable `rootProject.ext.compileSdkVersion`, with a minimum/fallback of 35. SDK 37 is not required; the AAR consumer minimum stays at 35, including with AGP 9.
 - **Android JDK baseline**: JDK 17 and JDK 21 are the validated Android build baselines; newer JDKs are not blocked by NotifyKit but depend on the consumer Android toolchain
 - **Single Android module** — the original Notifee shipped a pre-compiled AAR bundled inside the npm tarball under a frozen Maven coordinate; this fork compiles the core from source as part of the React Native bridge module on every consumer build. Eliminates the `FAIL_ON_PROJECT_REPOS` issue on RN 0.74+ and the Gradle cache staleness bug that could serve outdated bytecode after `yarn upgrade`.
 - **Expo CNG development builds** — iOS FCM Mode NSE automation and Android foreground service manifest configuration are available through the config plugin. Android Expo FCM smoke validation uses RNFirebase data-only messages plus `notifee.handleFcmMessage`.
@@ -535,6 +535,8 @@ This fork is a complete migration to React Native's **New Architecture**:
 - **Custom repeat intervals for timestamp triggers** — `TimestampTrigger.repeatInterval` supports calendar-based recurrences such as every 2 days, every 2 weeks, or every 3 months from a selected start timestamp. On iOS, repeating timestamp triggers now use a bounded rolling schedule of one-shot local notifications instead of native repeating calendar triggers; this enables custom repeat intervals and start-date-respecting recurrence, but apps that relied on native iOS repeating triggers being scheduled indefinitely should review the iOS notes in the [Triggers guide](docs/react-native/triggers.mdx#custom-repeat-intervals).
 - **New API: `setNotificationConfig()`** — opt-out flag to prevent Notifee from intercepting iOS remote notification handlers (see [New APIs](#new-apis) below)
 - **Baseline Profile** — the library AAR ships a Baseline Profile that instructs ART to AOT-compile the foreground service notification hot path at install time, eliminating JIT penalty on first invocation
+
+Android API 35 and the current WorkManager dependency require **AGP 8.6.0 or newer** (AGP 8.6 requires Gradle 8.7). Higher SDKs need a compatible toolchain: API 36 requires AGP 8.9.1 or newer; API 37 requires AGP 9.1.1 or newer. Select Gradle for the chosen AGP and React Native version using the [Android compatibility tables](https://developer.android.com/build/releases/about-agp). The RN 0.85.3 smoke app is configured for SDK 36 and Gradle 9.3.1; this does not certify RN 0.88. Hosts that only configure the app DSL or a version catalog must expose the root extra property before the library is evaluated to opt into a higher SDK. See the [installation guide](https://docs.page/marcocrupi/react-native-notify-kit/react-native/installation) for accepted values, fallback behavior, and standalone build limitations.
 
 ## Bugs Fixed from Upstream Notifee
 

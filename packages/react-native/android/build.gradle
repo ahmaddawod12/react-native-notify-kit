@@ -1,7 +1,8 @@
 import org.gradle.internal.jvm.Jvm
 
 buildscript {
-  // The Android Gradle plugin is only required when opening the android folder stand-alone.
+  // Legacy standalone declaration only; this folder is not a complete standalone RN build.
+  // API 35 and WorkManager 2.11.1 require at least AGP 8.6.0.
   // This avoids unnecessary downloads and potential conflicts when the library is included as a
   // module dependency in an application project.
   if (project == rootProject) {
@@ -11,7 +12,7 @@ buildscript {
     }
 
     dependencies {
-      classpath("com.android.tools.build:gradle:8.2.2")
+      classpath("com.android.tools.build:gradle:8.6.0")
       classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24")
     }
   }
@@ -60,13 +61,46 @@ if (project.hasProperty('reactNativeProjects')) {
   project.evaluationDependsOn(':app')
 }
 
+// Follow the conventional React Native host property without changing the host's SDK.
+// Only configuration parsing can fall back; SDK/toolchain/build errors must propagate.
+def notifeeCompileSdk = 35
+if (rootProject.ext.has('compileSdkVersion')) {
+  def hostCompileSdk = rootProject.ext.get('compileSdkVersion')
+  Integer hostApi = null
+  try {
+    if (hostCompileSdk instanceof Number) {
+      hostApi = new BigDecimal(hostCompileSdk.toString()).intValueExact()
+    } else if (hostCompileSdk instanceof CharSequence) {
+      def sdk = hostCompileSdk.toString().trim()
+      if (sdk ==~ /(?:android-)?[0-9]+/) {
+        hostApi = new BigDecimal(sdk.replaceFirst(/^android-/, '')).intValueExact()
+      }
+    }
+  } catch (NumberFormatException | ArithmeticException ignored) {
+    // Non-finite numbers, fractions and integer overflow are unusable configuration.
+  }
+  if (hostApi != null && hostApi > 0) {
+    notifeeCompileSdk = Math.max(35, hostApi)
+  } else {
+    logger.warn("[react-native-notify-kit] Ignoring unusable rootProject.ext.compileSdkVersion " +
+      "(type: ${hostCompileSdk == null ? 'null' : hostCompileSdk.getClass().simpleName}); " +
+      "expected a positive integer API level or stable android-N identifier in the 32-bit integer range. " +
+      "Using compileSdk 35.")
+  }
+}
+
 android {
   namespace = "io.invertase.notifee"
-  compileSdk = 35
+  compileSdk = notifeeCompileSdk
 
   defaultConfig {
     minSdk = 24
     targetSdk = 35
+    // AGP 9 otherwise defaults the consumer minimum to the inherited compile SDK.
+    // Keep the API 35 dependency baseline independent of the SDK used to compile.
+    aarMetadata {
+      minCompileSdk = 35
+    }
     multiDexEnabled = true
 
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

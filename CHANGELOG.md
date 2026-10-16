@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android / build configuration**: inherit a usable `rootProject.ext.compileSdkVersion` with a minimum/fallback of 35, so hosts using SDK 36 or 37 can compile the library at the same level. Invalid values warn and fall back without truncation or host mutation; `minSdk = 24`, `targetSdk = 35` and JVM target 17 are unchanged. SDK 37 is not required: the AAR consumer minimum is explicitly kept at 35 to prevent AGP 9 from defaulting it to a higher inherited compile SDK.
+- **Android / toolchain documentation**: align the legacy standalone AGP declaration to the API 35 / WorkManager 2.11.1 minimum of 8.6.0, clarify that the standalone folder remains incomplete, and document SDK-dependent AGP/Gradle requirements instead of the obsolete AGP 8.2.2 / generic Gradle 8.x guidance. Smoke target values do not certify RN 0.88 compatibility.
+
 ## [10.8.0] - 2026-09-29
 
 ### Added
