@@ -9,8 +9,8 @@ by the user and lives for the duration of the service.
 
 <Vimeo id="386254150" caption="Android Foreground Service" />
 
-The service task can run for as long as required whilst the application is open, alive or killed. Once the task has complete
-the service is stopped and the notification is removed. Examples of when to use a Foreground Service are:
+The service task can continue while the application is in the background, subject to Android and device restrictions.
+Once the task completes, the service is stopped and the notification is removed. Examples of when to use a Foreground Service are:
 
 - Capturing on-going information (such as current location for a fitness or delivery app).
 - Playing media to the user.
@@ -43,9 +43,26 @@ Calling `stopForegroundService()` stops the active service and removes its notif
 the call is a no-op. Duplicate STOP calls are safe, and the library does not cold-start a `ForegroundService` just to stop it.
 
 On Android 12+ (API 31+), a `ForegroundServiceStartNotAllowedException` in the defensive terminal STOP/null path is handled
-without crashing the process. This denial handling does not apply to real START failures, unrelated errors, or configuration failures.
+non-fatally. The unreleased fix for [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81) also automatically
+handles a narrow START case: after process death, Android may retry or redeliver
+a START that the new process no longer tracks. If the command carries Android's RETRY/REDELIVERY flags and a valid request
+ID, and no foreground state or service runner has been acquired, denial of the initial `startForeground()` promotion is
+non-fatal. The library does not treat the denied promotion as successful or start a runner for that command.
+It attempts to stop that service instance while preserving other pending STARTs. If they prevent stopping,
+it re-evaluates the stop once none remain pending after definite rejection, provided the denied delivery is still current.
 
-The service can also be stopped by the device (e.g. low memory) or if the user force quits from the application settings.
+Separately, [Issue #82](https://github.com/marcocrupi/react-native-notify-kit/issues/82) handles a qualified initial
+tracked START promotion denial on Android 15+ (API 35+). A valid tracked request can reach a new, never-promoted instance
+after the FGS budget is exhausted, and Android can deny the actual `startForeground()` call. Only
+`ForegroundServiceStartNotAllowedException` within that initial promotion boundary, with the implemented request,
+ownership, and generation eligibility checks still valid, is handled non-fatally. Only the denied request is terminalized;
+its runner is not started, other pending START obligations are preserved, and denial is not treated as successful promotion.
+This does not generalize to every FGS denial. Native diagnostics record `cause=UNKNOWN`; exception message text is not an
+authoritative diagnosis of Android's reason.
+
+Other app-requested START failures, unrelated errors, and invalid configurations retain their existing error handling.
+Neither recovery bypasses Android's background restrictions or guarantees service survival or restart under Android/OEM
+policies. The device can stop the service (e.g. low memory), as can a user force quit from the application settings.
 
 ### Attach a notification
 
@@ -69,7 +86,7 @@ notifee.displayNotification({
 
 Running this code will create a foreground service notification which is bound to the runner we registered with
 `registerForegroundService` above. As our example never returns the promise, the notification will exist for the lifetime
-of the application.
+of the service, subject to Android timeouts and device restrictions.
 
 You may also notice we have provided `color` and `colorized` properties. When setting `colorized` to `true` on a
 foreground service notification, the `color` will be used to change the entire background color of the notification,
@@ -77,7 +94,7 @@ which is not possible on standard notifications.
 
 ### Building a long lived task
 
-To simplify the experience for developers, a long lived task will continuously run until you call `stopForegroundService`. This allows us to create intervals, or subscribe to events which we can use to update the notification.
+A long lived task can use intervals or subscribe to events to update the notification until it completes or you call `stopForegroundService()`, subject to Android timeouts and device restrictions. Stopping the native service does not automatically cancel application-owned JavaScript work.
 
 For example, we could build a task which subscribes to an event handler:
 
@@ -229,6 +246,80 @@ notifee.displayNotification({
 If no `foregroundServiceTypes` property is provided on the notification, the types are taken from the manifest.
 
 If a new permission is granted while the service is running, posting the same notification (same `id` and `channelId`) with the updated `foregroundServiceTypes` array updates the running service with the new types.
+
+### Android 15+ data sync timeouts
+
+For apps targeting Android 15+ (API 35+), Android limits background `dataSync` foreground execution to a cumulative
+6 hours in a 24-hour period. This budget is shared by all services of that type in the application, rather than being a
+separate timer for each notification. A new START or process recreation does not automatically reset it. Bringing the app
+to the foreground resets the allowance under Android's rules. The effective remaining time is not exposed through a
+reliable ordinary public API. `mediaProcessing` has its own separately tracked budget; `shortService` has shorter limits.
+See [Foreground service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout) and
+[Android 15 behavior changes](https://developer.android.com/about/versions/15/behavior-changes-15#fgs-changes).
+
+When the budget is exhausted, Android can invoke `onTimeout()` and allows only a few seconds for service teardown.
+The application process must be able to execute that handling in time; otherwise Android can crash it with
+`RemoteServiceException$ForegroundServiceDidNotStopInTimeException`.
+
+The Android foreground-service timeout path now prioritizes foreground demotion, coordinates conditional service stopping
+with concurrent START requests, and protects newer service state from stale timeout cleanup. It uses
+`STOP_FOREGROUND_REMOVE` to remove the foreground notification, snapshots the latest valid notification for the event,
+and protects runner, cached notification, and ownership state when retiring a foreground lifetime. Duplicate and stale
+callbacks are checked against that lifetime before cleanup. Conditional stopping requires current authority and preserves
+pending STARTs, including obligations whose acceptance is unknown.
+
+A conditional stop can be refused when later STARTs exist, or deferred when stopping is not authorized. Accepted,
+refused/unknown, and failed outcomes are distinct; a normal return from `stopForeground()` is not independent confirmation
+from Android's Activity Manager (AMS). Demotion and stop failures remain observable in native diagnostics and are not
+converted to success. If a callback's provenance is ambiguous but its type matches the current foreground type, handling
+may prioritize demotion to reduce crash risk; this can end a newer foreground lifetime early.
+
+The native timeout handling is hardened when Android delivers the callback and the application process can execute it.
+Device-level process suspension may still prevent timely handling. A callback that never executes cannot initiate teardown,
+and process survival is not guaranteed under Android/OEM suspension. Issue #82 reports crashes on vivo/iQOO/OnePlus
+Android 15/16 and hypothesizes an OEM CPU freeze; that specific cause is unconfirmed. Qualification on those devices under
+the original conditions and reproduction of the reported OEM freeze are **NOT_RUN**. The responsive Pixel timeout test
+does not establish that these OEM crashes are eliminated.
+
+#### Handling FG_TIMEOUT
+
+`EventType.FG_TIMEOUT = 9` is Android-only. Native handling attempts this event best-effort when it handles a foreground
+service timeout and a notification snapshot is available. `EventDetail` can contain `notification`, optional `startId`,
+and optional `fgsType`. The API 34 single-parameter callback can report `fgsType = -1` because it supplies no explicit type.
+
+Register foreground and background listeners at the usual application entry points. For example, in `index.js`, before
+`AppRegistry.registerComponent`, add this branch to your existing background handler (only one can be registered):
+
+```js
+import notifee, { EventType } from 'react-native-notify-kit';
+
+notifee.onBackgroundEvent(async ({ type, detail }) => {
+  if (type === EventType.FG_TIMEOUT) {
+    console.log('Foreground service timeout', {
+      notificationId: detail.notification?.id,
+      startId: detail.startId,
+      fgsType: detail.fgsType,
+    });
+    // Signal your application-owned task to stop and checkpoint if appropriate.
+    // Do not immediately start another foreground service here.
+  }
+});
+```
+
+Use the same event check in your `onForegroundEvent` listener for foreground delivery and unsubscribe when its component
+unmounts. See [Events](/react-native/events) for listener registration and background/headless constraints.
+The event is not an AMS teardown acknowledgment, does not guarantee JavaScript task cancellation, and does not authorize a
+new START. If the process is suspended or terminated, JavaScript may never run the handler. Delivery is not guaranteed
+exactly once in every Android condition.
+
+#### Planning dataSync work
+
+- Make long tasks interruptible and save progress or checkpoints where appropriate; handle cancellation in your own task.
+- Plan for bounded foreground execution and coordinate all `dataSync` services sharing the application's budget.
+- Do not immediately restart after `FG_TIMEOUT` without considering Android's budget and START restrictions.
+- Consider [WorkManager or other appropriate alternatives](https://developer.android.com/develop/background-work/background-tasks/data-transfer-options) for deferrable work. WorkManager is not a guaranteed bypass of FGS limits.
+- Account for OEM execution restrictions and battery policies. Select a foreground service type that matches the actual
+  work, rather than choosing another type just to avoid a timeout.
 
 ### Controlling display timing on Android 12+
 

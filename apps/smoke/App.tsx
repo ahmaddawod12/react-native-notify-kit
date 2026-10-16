@@ -7,6 +7,7 @@ import {
   StyleSheet,
   View,
   Alert,
+  AppState,
   Linking,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -40,6 +41,13 @@ import {
   extractIssue44FgsStopDeepLink,
 } from './issue44FgsStopHarness';
 import { executeRebootSmokeDeepLink, extractRebootSmokeDeepLink } from './rebootSmokeHarness';
+import { extractIssue81DeepLink, installIssue81SmokeRouter } from './issue81FgsRedeliveryHarness';
+import { issue82Harness } from './issue82DataSyncBudgetHarness';
+import { createIssue82ArmAdmission } from './issue82ArmAdmission';
+import { decode82 } from './issue82Receipt';
+
+// App is imported before index.js registers the default FGS runner.
+const issue81Harness = installIssue81SmokeRouter();
 
 // VERIFY-549 AUTO-RUN FLAG — sed-toggled by scripts/verify-549-fix.sh.
 // When true, the app launches directly into the race-test screen and auto-runs
@@ -397,6 +405,18 @@ function App() {
         return;
       }
 
+      if (
+        (globalThis as typeof globalThis & { __NOTIFEE_ISSUE82_ARMED__?: boolean })
+          .__NOTIFEE_ISSUE82_ARMED__
+      ) {
+        logSmokeResult({ scenario: 'issue44-fgs-stop', status: 'FAIL', reason: 'issue82_armed' });
+        return;
+      }
+      if (issue81Harness.isActive()) {
+        logSmokeResult({ scenario: 'issue44-fgs-stop', status: 'FAIL', reason: 'issue81_active' });
+        return;
+      }
+
       log(`Issue44 FGS stop deep link types: ${request.rawTypes}`);
       executeIssue44FgsStopDeepLink(request).catch((e: unknown) => {
         logSmokeResult({
@@ -422,6 +442,97 @@ function App() {
     });
 
     return () => {
+      subscription.remove();
+    };
+  }, [log]);
+
+  // Preparation only: this Activity path must never run during a negative budget witness.
+  useEffect(() => {
+    let current = true;
+    const admission = createIssue82ArmAdmission({
+      appState: AppState,
+      arm: (id, valid, session) => issue82Harness.arm(id, () => current && valid(), session),
+      rejected: (id, error) =>
+        console.log(
+          `ISSUE82:ARM_ERROR ${JSON.stringify({ correlationId: id, reason: smokeErrorReason(error) })}`,
+        ),
+    });
+    const stateSubscription = AppState.addEventListener('change', () => admission.changed());
+    const handleUrl = (url: string) => {
+      const match =
+        /^notifykit:\/\/issue82\/arm\?correlationId=([a-zA-Z0-9_-]{1,80})(?:&diagnostic=([A-Za-z0-9_-]{1,4000}))?$/.exec(
+          url,
+        );
+      if (!current || !match) {
+        return;
+      }
+      let session;
+      try {
+        session = match[2] ? JSON.parse(decode82(match[2])) : undefined;
+      } catch {
+        console.log('ISSUE82:ARM_ERROR invalid_diagnostic_encoding');
+        return;
+      }
+      admission.request(match[1], session);
+    };
+    void Linking.getInitialURL()
+      .then(url => {
+        if (current && url) {
+          handleUrl(url);
+        }
+      })
+      .catch(error => {
+        if (current) {
+          log(smokeErrorReason(error));
+        }
+      });
+    const subscription = Linking.addEventListener('url', event => handleUrl(event.url));
+    return () => {
+      current = false;
+      admission.dispose();
+      stateSubscription.remove();
+      subscription.remove();
+    };
+  }, [log]);
+
+  // Issue #81 persistent FGS commands (explicit Activity deep link).
+  useEffect(() => {
+    let current = true;
+    const handleUrl = (url: string) => {
+      if (!current) {
+        return;
+      }
+      const request = extractIssue81DeepLink(url);
+      if (request) {
+        void issue81Harness.execute(request).catch(error => {
+          if (!current) {
+            return;
+          }
+          console.log(
+            `ISSUE81:ERROR ${JSON.stringify({
+              correlationId: request.correlationId,
+              loggedAt: Date.now(),
+              reason: smokeErrorReason(error),
+            })}`,
+          );
+        });
+      }
+    };
+    void Linking.getInitialURL()
+      .then(url => {
+        if (current && url) {
+          handleUrl(url);
+        }
+      })
+      .catch(error => {
+        if (!current) {
+          return;
+        }
+        log(`Issue81 initial URL error: ${smokeErrorReason(error)}`);
+      });
+    const subscription = Linking.addEventListener('url', event => handleUrl(event.url));
+    return () => {
+      current = false;
       subscription.remove();
     };
   }, [log]);
@@ -498,6 +609,10 @@ function App() {
   // Register foreground event listener with proper cleanup
   useEffect(() => {
     const unsubscribe = notifee.onForegroundEvent(({ type, detail }) => {
+      if (detail.notification?.data?.smokeScenario === 'issue82-datasync-budget') {
+        void issue82Harness.handle({ type, detail }, 'foreground');
+        return;
+      }
       const typeName = EventType[type] || String(type);
       console.log(
         `[ForegroundEvent] type=${typeName} id=${detail.notification?.id ?? '?'} ` +
@@ -554,6 +669,21 @@ function App() {
 
   const run = useCallback(
     async (label: string, fn: () => Promise<unknown>) => {
+      if (
+        (issue81Harness.isActive() ||
+          (globalThis as typeof globalThis & { __NOTIFEE_ISSUE82_ARMED__?: boolean })
+            .__NOTIFEE_ISSUE82_ARMED__) &&
+        [
+          'startForegroundService',
+          'stopForegroundService',
+          'startFgsNoType',
+          'prewarmForegroundService',
+          'startFgsNoOngoing',
+        ].includes(label)
+      ) {
+        log(`${label}: blocked while Issue81 owns the FGS`);
+        return;
+      }
       try {
         const result = await fn();
         log(`${label}: OK ${result != null ? JSON.stringify(result) : ''}`);
@@ -1452,6 +1582,19 @@ function App() {
     });
 
   const sections: Section[] = [
+    {
+      title: 'Issue 82 dataSync diagnostics',
+      buttons: [
+        {
+          label: 'Arm notification controls (visible preparation only)',
+          onPress: () => {
+            void issue82Harness
+              .arm(`manual-${Date.now()}`)
+              .catch(error => log(smokeErrorReason(error)));
+          },
+        },
+      ],
+    },
     {
       title: 'Permissions',
       buttons: [{ label: 'requestPermission', onPress: requestPermission }],

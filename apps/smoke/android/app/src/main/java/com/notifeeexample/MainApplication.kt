@@ -23,5 +23,6 @@ class MainApplication : Application(), ReactApplication {
   override fun onCreate() {
     super.onCreate()
     loadReactNative(this)
+    Issue82InstanceObserver.start()
   }
 }

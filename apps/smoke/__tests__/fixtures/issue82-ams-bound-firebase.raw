@@ -1,0 +1,50 @@
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+  User 0 active services:
+  * ServiceRecord{afd4c4b u0 com.notifeeexample/io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService c:com.notifeeexample}
+    intent={act=com.google.firebase.MESSAGING_EVENT pkg=com.notifeeexample}
+    packageName=com.notifeeexample
+    processName=com.notifeeexample
+    targetSdkVersion=36
+    baseDir=/data/app/~~XhjgUomF1wS7YA1eraPJgA==/com.notifeeexample-u3UUoUakhAiZ-sWqgIiR4g==/base.apk
+    dataDir=/data/user/0/com.notifeeexample
+    app=ProcessRecord{8248072 15782:com.notifeeexample/u0a1794}
+    useNewWiuLogic_forCapabilities()=true
+    useNewWiuLogic_forStart()=true
+    useNewBfslLogic()=true
+    mAllowWiu_noBinding=DENIED
+    mAllowWiu_inBindService=DENIED
+    mAllowWiu_byBindings=DENIED
+    getFgsAllowWiu_legacy=DENIED
+    getFgsAllowWiu_new=DENIED
+    getFgsAllowWiu_forStart=DENIED
+    getFgsAllowWiu_forCapabilities=DENIED
+    allowUiJobScheduling=false
+    recentCallingPackage=com.notifeeexample
+    recentCallingUid=11794
+    mAllowStart_noBinding=DENIED
+    mAllowStart_inBindService=ACTIVITY_VISIBILITY_GRACE_PERIOD
+    mAllowStart_byBindings=DENIED
+    getFgsAllowStart_legacy=ACTIVITY_VISIBILITY_GRACE_PERIOD
+    getFgsAllowStart_new=DENIED
+    getFgsAllowStart=DENIED
+    startForegroundCount=0
+    infoAllowStartForeground=[callingPackage: com.notifeeexample; callingUid: 11794; uidState: LAST; uidBFSL: n/a; BFGS denied: false; intent: Intent { act=com.google.firebase.MESSAGING_EVENT xflg=0x4 pkg=com.notifeeexample }; code:ACTIVITY_VISIBILITY_GRACE_PERIOD; tempAllowListReason:<null>; allowWiu:-1; targetSdkVersion:36; callerTargetSdkVersion:36; startForegroundCount:0; bindFromPackage:null; isBindService:true]
+    createTime=-1s461ms startingBgTimeout=--
+    lastActivity=-1s461ms restartTime=-1s461ms createdFromFg=false
+    Bindings:
+    * IntentBindRecord{71dde3b CREATE}:
+      intent={act=com.google.firebase.MESSAGING_EVENT xflg=0x4 pkg=com.notifeeexample}
+      binder=android.os.BinderProxy@e0fc958
+      requested=true received=true hasBound=true doRebind=false
+      * Client AppBindRecord{e21bab1 ProcessRecord{8248072 15782:com.notifeeexample/u0a1794}}
+        Per-process Connections:
+          ConnectionRecord{3a2991a u0 CR IMP com.notifeeexample/io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService:@df2ebc5 flags=0x41}
+    All Connections:
+      ConnectionRecord{3a2991a u0 CR IMP com.notifeeexample/io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService:@df2ebc5 flags=0x41}
+
+  Connection bindings to services:
+  * ConnectionRecord{3a2991a u0 CR IMP com.notifeeexample/io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService:@df2ebc5 flags=0x41}
+    binding=AppBindRecord{e21bab1 com.notifeeexample/io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService:com.notifeeexample}
+    conn=android.os.BinderProxy@df2ebc5 flags=0x41
+    ongoingCalls=false
+
