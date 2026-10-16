@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Android / build configuration**: inherit a usable `rootProject.ext.compileSdkVersion` with a minimum/fallback of 35, so hosts using SDK 36 or 37 can compile the library at the same level. Invalid values warn and fall back without truncation or host mutation; `minSdk = 24`, `targetSdk = 35` and JVM target 17 are unchanged. SDK 37 is not required: the AAR consumer minimum is explicitly kept at 35 to prevent AGP 9 from defaulting it to a higher inherited compile SDK.
 - **Android / toolchain documentation**: align the legacy standalone AGP declaration to the API 35 / WorkManager 2.11.1 minimum of 8.6.0, clarify that the standalone folder remains incomplete, and document SDK-dependent AGP/Gradle requirements instead of the obsolete AGP 8.2.2 / generic Gradle 8.x guidance. Smoke target values do not certify RN 0.88 compatibility.
 
+- **React Native / TypeScript**: replaced the incompatible `NativeModulesStatic` type reference for RN 0.88 without adding public APIs.
+- **Android / iOS assets**: reject invalid `Image.resolveAssetSource()` results for Android large icons, Big Picture pictures/large icons and iOS attachment URLs before native dispatch. Resolved URIs must be strings that are neither empty nor whitespace-only; the check covers Unicode `White_Space` (including U+0085) and ECMAScript whitespace (including U+FEFF). Meaningful resolved URIs are preserved exactly without normalization; direct string URL behavior is unchanged. This is not full URL syntax validation.
+
+### Changed
+
+- **Android / tests**: updated Robolectric to 4.17 and set the default simulation SDK to API 24, independently of `compileSdk`. API 36/37 simulations require a JDK 21 test JVM; Java/Kotlin targets remain 17 and consumer Android runtime requirements are unchanged.
+
+### Tests
+
+- **Android**: adapted foreground-service shadows to Robolectric's checked exception declarations and added compatibility coverage that preserves failure propagation and existing regression boundaries across API levels, including API 37.
+- **React Native / assets**: added validator and display/trigger regression coverage for invalid resolver results, Unicode whitespace-only rejection, exact URI preservation, unchanged direct strings and rejection before native dispatch.
+- **React Native 0.88**: validated TypeScript builds, consumer types and client tests with RN 0.85.3/0.88.0, plus Android native tests with JDK 17/21 respectively. RN 0.88/SDK 37 Android build and selected Pixel API 37 runtime checks predate the final validator changes; they do not establish full RN 0.88, FCM or foreground-service recovery qualification. See [Environment Support](docs/react-native/environment-support.mdx#react-native-088-validation) for scope and remaining limits.
+
 ## [10.8.1] - 2026-10-11
 
 ### Added

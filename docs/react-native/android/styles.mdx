@@ -30,6 +30,9 @@ notifee.displayNotification({
 ```
 
 It is also possible to override the `title`, `largeIcon` and `summary` text when the notification is in the expanded state.
+
+React Native image resources used for Big Picture `picture` or `largeIcon` follow the same [resolved-URI validation as large icons](/react-native/android/appearance#large-icons): invalid, empty or whitespace-only resolved URIs are rejected before native dispatch, and meaningful URIs are preserved exactly. Direct string inputs and the explicit `largeIcon: null` option are unchanged.
+
 To learn more, view the [`AndroidBigPictureStyle`](/react-native/reference/androidbigpicturestyle) documentation.
 
 ## Big Text

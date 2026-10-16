@@ -48,7 +48,7 @@ This fork fills the gap: it preserves all of Notifee's advanced features, migrat
 - iOS FCM Mode Notification Service Extension automation via config plugin.
 - Android foreground service manifest configuration via config plugin, with explicit opt-in for foreground service types.
 - Android Expo FCM smoke validation using RNFirebase data-only messages and `notifee.handleFcmMessage`.
-- Minimum supported React Native: `>=0.73`
+- React Native peer dependency: `>=0.73`; see the [validation scope](https://docs.page/marcocrupi/react-native-notify-kit/react-native/environment-support#react-native-088-validation) for tested versions.
 - Development target: React Native `0.85.3`
 - License: `Apache-2.0`
 - Full changelog: [CHANGELOG.md](CHANGELOG.md)
@@ -524,7 +524,7 @@ This fork is a complete migration to React Native's **New Architecture**:
 - **TurboModules only** — no legacy Bridge support (`NativeModules` replaced with `TurboModuleRegistry`)
 - **Android bridge rewritten in Kotlin** (original was Java)
 - **iOS bridge uses Objective-C++** with `NativeNotifeeModuleSpecJSI` TurboModule conformance
-- **Minimum React Native >=0.73**, development target **0.85.3**
+- **React Native peer dependency >=0.73**, development target **0.85.3**
 - **Toolchain**: Yarn 4, Node 22+, JDK 17+ for Android builds. Library `minSdk = 24` and `targetSdk = 35`; `compileSdk` inherits a usable `rootProject.ext.compileSdkVersion`, with a minimum/fallback of 35. SDK 37 is not required; the AAR consumer minimum stays at 35, including with AGP 9.
 - **Android JDK baseline**: JDK 17 and JDK 21 are the validated Android build baselines; newer JDKs are not blocked by NotifyKit but depend on the consumer Android toolchain
 - **Single Android module** — the original Notifee shipped a pre-compiled AAR bundled inside the npm tarball under a frozen Maven coordinate; this fork compiles the core from source as part of the React Native bridge module on every consumer build. Eliminates the `FAIL_ON_PROJECT_REPOS` issue on RN 0.74+ and the Gradle cache staleness bug that could serve outdated bytecode after `yarn upgrade`.
@@ -536,7 +536,7 @@ This fork is a complete migration to React Native's **New Architecture**:
 - **New API: `setNotificationConfig()`** — opt-out flag to prevent Notifee from intercepting iOS remote notification handlers (see [New APIs](#new-apis) below)
 - **Baseline Profile** — the library AAR ships a Baseline Profile that instructs ART to AOT-compile the foreground service notification hot path at install time, eliminating JIT penalty on first invocation
 
-Android API 35 and the current WorkManager dependency require **AGP 8.6.0 or newer** (AGP 8.6 requires Gradle 8.7). Higher SDKs need a compatible toolchain: API 36 requires AGP 8.9.1 or newer; API 37 requires AGP 9.1.1 or newer. Select Gradle for the chosen AGP and React Native version using the [Android compatibility tables](https://developer.android.com/build/releases/about-agp). The RN 0.85.3 smoke app is configured for SDK 36 and Gradle 9.3.1; this does not certify RN 0.88. Hosts that only configure the app DSL or a version catalog must expose the root extra property before the library is evaluated to opt into a higher SDK. See the [installation guide](https://docs.page/marcocrupi/react-native-notify-kit/react-native/installation) for accepted values, fallback behavior, and standalone build limitations.
+Android API 35 and the current WorkManager dependency require **AGP 8.6.0 or newer** (AGP 8.6 requires Gradle 8.7). Higher SDKs need a compatible toolchain: API 36 requires AGP 8.9.1 or newer; API 37 requires AGP 9.1.1 or newer. Select Gradle for the chosen AGP and React Native version using the [Android compatibility tables](https://developer.android.com/build/releases/about-agp). The RN 0.85.3 smoke app remains configured for SDK 36 and Gradle 9.3.1. TypeScript builds, consumer types and client tests have also been validated with RN 0.88.0; Android build and selected device checks covered RN 0.88 with SDK 37. See the [environment support guide](https://docs.page/marcocrupi/react-native-notify-kit/react-native/environment-support#react-native-088-validation) for the scope and remaining limits. Hosts that only configure the app DSL or a version catalog must expose the root extra property before the library is evaluated to opt into a higher SDK. See the [installation guide](https://docs.page/marcocrupi/react-native-notify-kit/react-native/installation) for accepted values, fallback behavior, and standalone build limitations.
 
 ## Bugs Fixed from Upstream Notifee
 

@@ -29,9 +29,9 @@ buildscript {
     compileSdkVersion = 35 // Use a higher SDK when your app/toolchain requires it.
     targetSdkVersion = 35
     minSdkVersion = 24
-    ...
+    // Other host properties...
   }
-  ...
+  // Other buildscript configuration...
 }
 ```
 
@@ -39,7 +39,7 @@ Positive integer API levels in the 32-bit integer range, decimal strings such as
 
 This convention does not discover SDK values held only in the app's Android DSL, version catalogs, convention plugins or preview configuration. Non-standard hosts must expose a usable `rootProject.ext.compileSdkVersion` before this module is evaluated to select a higher SDK. The library does not mutate host properties or require SDK 37. It explicitly sets `aarMetadata.minCompileSdk = 35` to preserve the dependency baseline even with [AGP 9, which otherwise defaults the AAR consumer minimum to the compile SDK](https://developer.android.com/build/releases/agp-9-0-0-release-notes#behavior-changes). Compiling with 37 does not by itself require consumers to compile with 37; dependencies may impose their own minimums.
 
-The repository's React Native 0.85.3 bare smoke app is configured with `compileSdkVersion = 36`, `targetSdkVersion = 36`, and Gradle wrapper 9.3.1. These are the smoke target's values, not universal consumer requirements. Inheriting a higher SDK does not certify a React Native version; RN 0.88 has not been build-validated here.
+The repository's React Native 0.85.3 bare smoke app is configured with `compileSdkVersion = 36`, `targetSdkVersion = 36`, and Gradle wrapper 9.3.1. These are the smoke target's values, not universal consumer requirements. Separate RN 0.88/SDK 37 build and selected device checks are described in [Environment Support](/react-native/environment-support#react-native-088-validation); they do not establish full RN 0.88 support.
 
 ### 2b. Gradle versions
 
@@ -52,6 +52,8 @@ The legacy standalone classpath declaration is aligned to AGP 8.6.0, but `packag
 ### 2c. Java version
 
 The library is compiled with Java 17 (`sourceCompatibility = VERSION_17`, `targetCompatibility = VERSION_17`). Android builds require JDK 17 or newer. JDK 17 and JDK 21 are the validated baselines. Newer JDK versions are not blocked by NotifyKit, but compatibility depends on the consumer Android toolchain: Gradle, Android Gradle Plugin, Kotlin, React Native, and Expo/EAS build images where applicable. JDK 8 and 11 are **not** supported.
+
+For contributors running the library's Robolectric 4.17 tests, API 36/37 simulations require a JDK 21 test JVM; the Java/Kotlin targets remain 17. See [Android Unit Test Toolchain](/react-native/environment-support#android-unit-test-toolchain) for the API 24 default and JDK 17 test selection. This is separate from consumer build and Android runtime requirements.
 
 ### 2d. React Native and New Architecture
 

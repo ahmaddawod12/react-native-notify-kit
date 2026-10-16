@@ -136,6 +136,8 @@ There are a number of different ways to display a large icon:
 - Absolute file path (e.g. `file:///xxxx/xxxx/xxxx.jpg`).
 - Android resources (checks mipmap first, then drawable - Note there appears to be an Android limitation where if the mipmap folder contains any xml files, the icon will not load).
 
+For React Native image resources such as `require('./image.jpg')` or `{ uri: 'file:///path/image.jpg' }`, `Image.resolveAssetSource()` must return a string URI containing at least one non-whitespace character. Missing or invalid results, including empty or whitespace-only URIs, fail validation before the notification is sent to native code. Meaningful resolved URIs are preserved exactly, without trimming or normalization. Direct string inputs keep their existing behavior; this check is not full URL syntax validation.
+
 The image will be automatically scaled to fit inside of the notification. It is
 recommended you use images a minimum size of 192x192 pixels to handle all device resolutions.
 

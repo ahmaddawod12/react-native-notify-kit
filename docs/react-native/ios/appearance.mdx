@@ -49,6 +49,8 @@ notifee.displayNotification({
 
 Audio, image and video files are supported.
 
+For React Native image resources passed as `attachments[].url`, `Image.resolveAssetSource()` must return a string URI containing at least one non-whitespace character. Missing or invalid results, including empty or whitespace-only URIs, reject the notification before native dispatch rather than skipping that attachment. Meaningful resolved URIs are preserved exactly, without trimming or normalization. Direct string URLs keep their existing behavior; this check is not full URL syntax validation.
+
 Advanced attachment options — `typeHint` (the [Uniform Type Identifier](https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html), e.g. `'public.jpeg'`, used when iOS can't infer the content type from the URL) and `thumbnailClippingRect` (to crop the thumbnail shown when the notification is collapsed) — are documented in the [`IOSNotificationAttachment`](/react-native/reference/iosnotificationattachment) reference along with every available field.
 
 ## Communication Notifications
