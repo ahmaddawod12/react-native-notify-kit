@@ -321,6 +321,60 @@ exactly once in every Android condition.
 - Account for OEM execution restrictions and battery policies. Select a foreground service type that matches the actual
   work, rather than choosing another type just to avoid a timeout.
 
+### Voluntary best-effort run limit (API 35+)
+
+`android.foregroundServiceBestEffortStopAfterMs` optionally requests an attempt to demote and stop the current foreground-service run after an elapsed duration. It is disabled when omitted or `undefined`. It requires Android API 35+, `asForegroundService: true`, and an effective foreground service type of **dataSync only**. If `foregroundServiceTypes` is omitted, the merged manifest must resolve to dataSync only. The receiver and FGS must use the application's supported process. Explicit mixed types and incompatible options are rejected before native START where possible. Android-only properties follow the library's existing platform validation behavior on iOS; there is no native iOS implementation of this feature.
+
+The duration must be a finite safe integer from **60,000 to 18,000,000 milliseconds**, inclusive. Native validation also checks the range and elapsed-deadline overflow. These bounds are product choices, not Android guarantees. The deadline starts at the first successful native promotion and uses `SystemClock.elapsedRealtime()`, including deep sleep. Same-ID updates preserve the original deadline. For an already promoted same-ID run with no unresolved START, repeating the same duration is accepted. Any run-limit-bearing request while a START is unresolved is rejected; retry only after it settles. Enabling or changing the option during a live run is rejected. Omission on an update does not disable the existing limit. A new run needs its own successful promotion; a type/epoch change revokes previous authority without implicitly rearming it.
+
+Scheduling uses **inexact** `AlarmManager.setAndAllowWhileIdle()` with an explicit immutable PendingIntent to an internal receiver. No new exact-alarm permission, battery exemption, polling, or maintenance alarm is needed. Delivery may be delayed by several minutes or may never happen. Earlier diagnostic Pixel runs observed delivery delays of several minutes; those historical measurements are not qualification of the current public API or an upper bound. The app-wide cumulative dataSync budget is unknown to the library and may be consumed by other services or prior runs before this voluntary deadline.
+
+This option is not a hard maximum and does not guarantee removal of `ForegroundServiceDidNotStopInTimeException`. OEM freeze behavior can prevent useful execution. Efficacy on vivo/iQOO/OnePlus has not been established. It is not a substitute for Android framework timeout handling, cooperative cancellation, or checkpoints.
+
+A resolved `displayNotification()` Promise confirms notification/START submission through the existing API. Alarm registration happens later, after promotion; the Promise does **not** confirm that protection is active. Scheduling, ledger/storage, AlarmManager availability, owner validation and cancellation failures produce native diagnostics under tag `ForegroundServiceRunLimit` (`SCHEDULE_FAILED`, `STORAGE_FAILED`, `ARM_FAILED`/`ARM_REJECTED`, `CANCEL_FAILED`). `ALARM_ARMED` is emitted only after registration and the ARMED ledger commit succeed. Partial failure revokes native authority and attempts ticket-specific cancellation; it does not automatically stop or retry the application task. A failed cancellation cannot give a stale envelope authority over a successor.
+
+A valid expiry attempts `stopForeground(STOP_FOREGROUND_REMOVE)`, removing the owned foreground notification, followed by a selective conditional stop. Pending or unknown START obligations can defer stopping. Native return markers and `stopSelfResult=true` are not AMS acknowledgements. A stale/duplicate ticket cannot stop a newer run. Process recreation never restores an old lifetime from storage, and the receiver never cold-starts a FGS.
+
+`EventType.FG_RUN_LIMIT_REACHED = 10` reports that native code handled an accepted voluntary expiry after essential teardown attempts, with the latest owned notification. Delivery is best-effort, outside lifecycle locks; the bridge is not required for native teardown. No event is guaranteed after process death or without a usable React context. `detail.foregroundServiceRunLimit` contains:
+
+- `requestedDurationMs`, `deadlineElapsed`, `deliveredElapsed` (elapsed milliseconds).
+- `demotion`: `returned` or `failed`; returned is not an AMS acknowledgement.
+- `conditionalStop`: `accepted`, `refused`, `deferred` or `failed`.
+
+There is no `stopped`, `amsState`, completion or crash-safety certificate. `FG_TIMEOUT = 9` remains exclusively the Android framework timeout signal; voluntary expiry never synthesizes it. Scheduling failure does not emit a misleading voluntary-expiry event; use native diagnostics.
+
+Android demotion does not cancel a JavaScript Promise, fetch/network operation, timer, application task or server work. Use idempotent checkpoints, cooperative cancellation (for example AbortController), and app-owned task-completion tracking. A run-limit event can trigger cooperative cancellation when received; it is not the only cancellation mechanism. Do not automatically restart a FGS on expiry to bypass Android's cumulative budget.
+
+```ts
+import notifee, { AndroidForegroundServiceType, EventType } from 'react-native-notify-kit';
+import { Platform } from 'react-native';
+
+const controller = new AbortController();
+const unsubscribe = notifee.onForegroundEvent(({ type, detail }) => {
+  if (type === EventType.FG_RUN_LIMIT_REACHED && detail.notification?.id === 'sync-run') {
+    controller.abort(); // Your task must actually observe this signal; delivery is best-effort.
+  }
+});
+
+if (Platform.OS === 'android') {
+  const channelId = await notifee.createChannel({ id: 'sync', name: 'Sync' });
+  await notifee.displayNotification({
+    id: 'sync-run',
+    title: 'Syncing',
+    android: {
+      channelId,
+      asForegroundService: true,
+      foregroundServiceTypes: [AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_DATA_SYNC],
+      ...(Number(Platform.Version) >= 35
+        ? { foregroundServiceBestEffortStopAfterMs: 30 * 60 * 1000 }
+        : {}),
+    },
+  });
+}
+// Register application work with registerForegroundService separately, pass controller.signal
+// to cancellable operations, persist checkpoints, and unsubscribe when this owner is disposed.
+```
+
 ### Controlling display timing on Android 12+
 
 Android 12 (API 31) introduced a system-imposed delay of up to 10 seconds before a foreground service notification is displayed, to give short-lived services time to finish before bothering the user. The library overrides this by default so foreground service notifications display **immediately**, matching pre-Android-12 behavior. You can opt out via `foregroundServiceBehavior`:

@@ -21,3 +21,21 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// Compile the reviewed Debug fixture only into the smoke host-test lane.
+// Neither fixture nor host witnesses are included in the library's production source sets.
+gradle.projectsEvaluated {
+    def core = rootProject.findProject(':react-native-notify-kit')
+    core.android.sourceSets.test.java.srcDir(rootProject.file('host-tests'))
+    core.android.sourceSets.test.java.srcDir(rootProject.file('app/src/debug/java/app/notifee/core'))
+    core.tasks.withType(Test).configureEach {
+        filter {
+            ['IndependentBatchTest', 'IndependentStorageTest', 'Issue82P7Test'].each { witness ->
+                // These fixtures inherit setup/helpers. Run inherited tests once in the base suite.
+                ['T*', 'audit*', 'B82*', 'GC*', 'PUB*'].each { inherited ->
+                    excludeTestsMatching("app.notifee.core.${witness}.${inherited}")
+                }
+            }
+        }
+    }
+}

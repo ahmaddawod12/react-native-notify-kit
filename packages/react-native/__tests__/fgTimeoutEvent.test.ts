@@ -27,6 +27,19 @@ const legacyTypes = {
   FG_ALREADY_EXIST: 8,
 };
 const eventCases = [
+  {
+    name: 'voluntary expiry',
+    type: 10,
+    metadata: {
+      foregroundServiceRunLimit: {
+        requestedDurationMs: 60000,
+        deadlineElapsed: 123000,
+        deliveredElapsed: 124000,
+        demotion: 'returned',
+        conditionalStop: 'accepted',
+      },
+    },
+  },
   { name: 'timeout with explicit type', type: 9, metadata: { startId: 42, fgsType: 1 } },
   { name: 'timeout with sentinel type', type: 9, metadata: { startId: 43, fgsType: -1 } },
   { name: 'timeout without metadata', type: 9, metadata: {} },
@@ -59,6 +72,7 @@ describe('public Android foreground service timeout event', () => {
 
   test('exports FG_TIMEOUT = 9 and preserves all existing EventType values', () => {
     expect(publicApi.EventType.FG_TIMEOUT).toBe(9);
+    expect(publicApi.EventType.FG_RUN_LIMIT_REACHED).toBe(10);
     for (const [name, value] of Object.entries({ ...legacyTypes, FG_TIMEOUT: 9 })) {
       expect(publicApi.EventType[name as keyof typeof publicApi.EventType]).toBe(value);
       expect(publicApi.EventType[value]).toBe(name);

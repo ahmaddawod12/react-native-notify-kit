@@ -90,3 +90,29 @@ test('persisted control blocks #81 and #44 before runner re-registration even wi
   displayed.mockRestore();
   jest.restoreAllMocks();
 });
+
+test('alarm PoC keeps only its explicitly tagged native run pending', async () => {
+  Object.defineProperty(Platform, 'OS', { value: 'android' });
+  jest.requireActual('../index');
+  const router = (
+    globalThis as typeof globalThis & { __ISSUE82_TEST_ROUTER__?: (n: unknown) => Promise<void> }
+  ).__ISSUE82_TEST_ROUTER__!;
+  let completed = false;
+  const pendingWork = router({
+    id: 'issue82-alarm-run',
+    data: { smokeScenario: 'issue82-alarm-poc', run: 'run' },
+  }).then(() => {
+    completed = true;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(pendingWork).toBeInstanceOf(Promise);
+  expect(completed).toBe(false);
+  await expect(
+    router({
+      id: 'issue82-alarm-other',
+      data: { smokeScenario: 'issue82-alarm-poc', run: 'run' },
+    }),
+  ).resolves.toBeUndefined();
+  await expect(router({ id: 'ordinary' })).resolves.toBeUndefined();
+});

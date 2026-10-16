@@ -662,6 +662,12 @@ class NotificationManager {
 
   static ListenableFuture<Void> displayNotification(
       NotificationModel notificationModel, Bundle triggerBundle) {
+    // Reject invalid native/bridge opt-in before dispatching any START or posting a notification.
+    try {
+      notificationModel.getAndroid().getForegroundServiceBestEffortStopAfterMs();
+    } catch (RuntimeException invalidOption) {
+      return Futures.immediateFailedFuture(invalidOption);
+    }
     return new ExtendedListenableFuture<>(notificationBundleToBuilder(notificationModel))
         .continueWith(
             (taskResult) -> {

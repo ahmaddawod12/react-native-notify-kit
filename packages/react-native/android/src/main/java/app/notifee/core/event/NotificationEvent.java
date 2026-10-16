@@ -41,6 +41,8 @@ public class NotificationEvent {
 
   @KeepForSdk public static final int TYPE_FG_TIMEOUT = 9;
 
+  @KeepForSdk public static final int TYPE_FG_RUN_LIMIT_REACHED = 10;
+
   private final int type;
   private final Bundle extras;
   private final NotificationModel notification;
@@ -84,6 +86,10 @@ public class NotificationEvent {
       if (input != null) {
         eventDetailMap.put("input", input);
       }
+
+      Bundle runLimit = extras.getBundle("foregroundServiceRunLimit");
+      if (runLimit != null)
+        eventDetailMap.put("foregroundServiceRunLimit", ObjectUtils.bundleToMap(runLimit));
 
       if (extras.containsKey("startId")) {
         eventDetailMap.put("startId", extras.getInt("startId"));

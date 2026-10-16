@@ -98,6 +98,35 @@ public class NotificationAndroidModel {
     return foregroundServiceType;
   }
 
+  /** Validates bridge input too; never truncate a JS double or silently clamp overflow. */
+  @Nullable
+  public Long getForegroundServiceBestEffortStopAfterMs() {
+    String key = "foregroundServiceBestEffortStopAfterMs";
+    if (!mNotificationAndroidBundle.containsKey(key)) return null;
+    Object raw = mNotificationAndroidBundle.get(key);
+    String error = "notification.android." + key;
+    if (!(raw instanceof Number)) throw new IllegalArgumentException(error + " must be a number");
+    double value = ((Number) raw).doubleValue();
+    if (!Double.isFinite(value) || value != Math.rint(value) || value < 60000 || value > 18000000) {
+      throw new IllegalArgumentException(error + " must be an integer in 60000..18000000ms");
+    }
+    if (!getAsForegroundService() || Build.VERSION.SDK_INT < 35) {
+      throw new IllegalArgumentException(error + " requires asForegroundService and API 35+");
+    }
+    int type = getForegroundServiceType();
+    if (type != ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
+        && type != ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) {
+      throw new IllegalArgumentException(error + " requires single dataSync");
+    }
+    long duration = ((Number) raw).longValue();
+    try {
+      Math.addExact(android.os.SystemClock.elapsedRealtime(), duration);
+    } catch (ArithmeticException failure) {
+      throw new IllegalArgumentException(error + " deadline overflow", failure);
+    }
+    return duration;
+  }
+
   /**
    * Gets whether the notification is for a foreground service
    *

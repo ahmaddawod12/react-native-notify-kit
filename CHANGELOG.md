@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Android**: add the default-disabled `notification.android.foregroundServiceBestEffortStopAfterMs` option for a single `dataSync` foreground run on API 35+ (60,000–18,000,000 integer milliseconds). An internal inexact alarm attempts REMOVE demotion and selective stopping after the first successful promotion; same-ID updates preserve the deadline. The distinct best-effort `FG_RUN_LIMIT_REACHED = 10` event reports native handling without certifying AMS teardown or JavaScript cancellation. Scheduling/storage failures remain observable in native diagnostics. Delivery can be late or absent, and effectiveness against vivo/iQOO/OEM timeout crashes is unproven.
+
 ### Fixed
 
 - **Android / build configuration**: inherit a usable `rootProject.ext.compileSdkVersion` with a minimum/fallback of 35, so hosts using SDK 36 or 37 can compile the library at the same level. Invalid values warn and fall back without truncation or host mutation; `minSdk = 24`, `targetSdk = 35` and JVM target 17 are unchanged. SDK 37 is not required: the AAR consumer minimum is explicitly kept at 35 to prevent AGP 9 from defaulting it to a higher inherited compile SDK.

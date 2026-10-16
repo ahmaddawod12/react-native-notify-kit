@@ -45,6 +45,9 @@ class NotifeeEventSubscriber : EventListener {
             extras.getString(KEY_DETAIL_INPUT)?.let { input ->
                 eventDetailMap.putString(KEY_DETAIL_INPUT, input)
             }
+            extras.getBundle("foregroundServiceRunLimit")?.let { runLimit ->
+                eventDetailMap.putMap("foregroundServiceRunLimit", Arguments.fromBundle(runLimit))
+            }
             if (extras.containsKey("startId")) {
                 eventDetailMap.putInt("startId", extras.getInt("startId"))
             }

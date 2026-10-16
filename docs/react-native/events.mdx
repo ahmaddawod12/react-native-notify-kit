@@ -140,6 +140,24 @@ JavaScript delivery, including exactly-once delivery, is not guaranteed if the p
 The event does not acknowledge Android service teardown, guarantee cancellation of JavaScript work, or authorize a new
 START. See [Handling FG_TIMEOUT](/react-native/android/foreground-service#handling-fg_timeout) for the example and budget guidance.
 
+## Android voluntary foreground service run limit
+
+`EventType.FG_RUN_LIMIT_REACHED = 10` is a separate Android-only, best-effort event for an accepted voluntary expiry
+requested with `notification.android.foregroundServiceBestEffortStopAfterMs`. Native code attempts demotion with REMOVE
+and selective conditional stopping before publishing outside lifecycle locks. It does not wait for a React context.
+`FG_TIMEOUT = 9` retains its framework-timeout meaning; voluntary expiry never synthesizes it.
+
+The event carries the latest owned `detail.notification` and optional `detail.foregroundServiceRunLimit` metadata:
+`requestedDurationMs`, `deadlineElapsed`, `deliveredElapsed`, `demotion` (`returned` or `failed`) and
+`conditionalStop` (`accepted`, `refused`, `deferred` or `failed`). Elapsed values include deep sleep. A returned demotion
+or accepted conditional stop is not an AMS teardown acknowledgement. The event does not certify task completion,
+JavaScript cancellation, a final service stop or protection against later crashes.
+
+Add a branch for this event to your existing foreground listener and single background handler. Use it to request
+cooperative cancellation or checkpointing when received; JavaScript delivery may be delayed or absent after process
+suspension/death. Native teardown is independent of event delivery. Scheduling failures are reported through native
+diagnostics, not a misleading expiry event. See the [run-limit contract and example](/react-native/android/foreground-service#voluntary-best-effort-run-limit-api-35).
+
 ## App open events
 
 If user interaction on a notification has caused your application to open, you may want to obtain the notification which triggered the app to open (e.g. a specific chat message). Call `getInitialNotification()` early in your React lifecycle to retrieve that notification.

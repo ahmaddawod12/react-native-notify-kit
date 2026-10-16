@@ -45,6 +45,7 @@ import { extractIssue81DeepLink, installIssue81SmokeRouter } from './issue81FgsR
 import { issue82Harness } from './issue82DataSyncBudgetHarness';
 import { createIssue82ArmAdmission } from './issue82ArmAdmission';
 import { decode82 } from './issue82Receipt';
+import { displayRunLimitSmoke, recordRunLimitSmokeEvent } from './issue82RunLimitSmoke';
 
 // App is imported before index.js registers the default FGS runner.
 const issue81Harness = installIssue81SmokeRouter();
@@ -609,6 +610,7 @@ function App() {
   // Register foreground event listener with proper cleanup
   useEffect(() => {
     const unsubscribe = notifee.onForegroundEvent(({ type, detail }) => {
+      if (recordRunLimitSmokeEvent({ type, detail })) return;
       if (detail.notification?.data?.smokeScenario === 'issue82-datasync-budget') {
         void issue82Harness.handle({ type, detail }, 'foreground');
         return;
@@ -1582,6 +1584,27 @@ function App() {
     });
 
   const sections: Section[] = [
+    {
+      title: 'Issue #82 public run limit (API 35+)',
+      buttons: [
+        {
+          label: 'Run limit: default disabled',
+          onPress: () => displayRunLimitSmoke(false).catch(console.error),
+        },
+        {
+          label: 'Run limit: opt in 60s',
+          onPress: () => displayRunLimitSmoke(true).catch(console.error),
+        },
+        {
+          label: 'Run limit: update same ID',
+          onPress: () => displayRunLimitSmoke(false, true).catch(console.error),
+        },
+        {
+          label: 'Run limit: explicit STOP',
+          onPress: () => notifee.stopForegroundService().catch(console.error),
+        },
+      ],
+    },
     {
       title: 'Issue 82 dataSync diagnostics',
       buttons: [

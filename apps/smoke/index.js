@@ -20,6 +20,7 @@ import App from './App';
 import { name as appName } from './app.json';
 import { logSmokeEvent } from './smokeAutomation';
 import { issue82Harness } from './issue82DataSyncBudgetHarness';
+import { isRunLimitSmokeRunner, recordRunLimitSmokeEvent } from './issue82RunLimitSmoke';
 
 // Smoke-only signed receipt transport. Never dispatches START or STOP.
 DeviceEventEmitter.addListener('Issue82SignedReceipt', payload => {
@@ -39,6 +40,7 @@ const EVENT_NAMES = Object.fromEntries(
 // Handle notification events when the app is in the background or killed.
 // Must be registered before AppRegistry.registerComponent().
 notifee.onBackgroundEvent(async ({ type, detail }) => {
+  if (recordRunLimitSmokeEvent({ type, detail })) return;
   if (await issue82Harness.handle({ type, detail })) {
     return;
   }
@@ -77,6 +79,21 @@ globalThis.__NOTIFEE_SMOKE_BACKGROUND_HANDLER_REGISTERED__ = true;
 // Android-only API — no-op on iOS but guarded for clarity.
 if (Platform.OS === 'android') {
   notifee.registerForegroundService(notification => {
+    if (isRunLimitSmokeRunner(notification)) {
+      console.log('RUN_LIMIT_PUBLIC_RUNNER', notification.id);
+      return new Promise(() => {});
+    }
+    const alarmRun = notification.data?.run;
+    if (
+      notification.data?.smokeScenario === 'issue82-alarm-poc' &&
+      typeof alarmRun === 'string' &&
+      /^[a-zA-Z0-9_-]{1,80}$/.test(alarmRun) &&
+      notification.id === `issue82-alarm-${alarmRun}`
+    ) {
+      // Keep diagnostic work pending when JS is alive. Native AlarmManager owns expiry;
+      // no JS timer or completion callback is needed for demotion or conditional stop.
+      return new Promise(() => {});
+    }
     const issue82Work = issue82Harness.runner(notification);
     if (issue82Work) {
       return issue82Work;
