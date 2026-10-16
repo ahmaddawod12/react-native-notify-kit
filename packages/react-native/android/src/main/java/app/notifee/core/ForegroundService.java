@@ -33,6 +33,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.os.Trace;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
@@ -68,6 +69,7 @@ public class ForegroundService extends Service {
   private static final Map<String, StartRequest> sPendingStarts = new HashMap<>();
   private static final String START_REQUEST_ID = "notifee.foregroundServiceStartRequestId";
   private static long sRunGeneration;
+  private static long sStartAdmissionRevision;
   private static ForegroundService sInstance;
   private static Object sStopRequest;
   private static ForegroundService sStateOwner;
@@ -83,6 +85,9 @@ public class ForegroundService extends Service {
   private int mRunFirstStartId;
   private Object mRunnerToken;
   private ForegroundEpoch mForegroundEpoch;
+  private ForegroundServiceRunLimitScheduler.Ticket mAlarmPoc;
+  private long mAlarmPocAttemptedRun = Long.MIN_VALUE;
+  private String mAlarmPocInstanceId;
   // Previously admitted metadata can collide with a successor even across run generations.
   // These IDs only disqualify stop authority; they never establish Android epoch provenance.
   private final Set<Integer> mTimeoutStartIds = new HashSet<>();
@@ -107,10 +112,14 @@ public class ForegroundService extends Service {
   // Guarded by sLifecycleLock then sLock. Retiring consumes timeout authority even on failure.
   private static final class ForegroundEpoch {
     final long runGeneration;
+    final long promotedElapsed = SystemClock.elapsedRealtime();
     final boolean ambiguousPromotion;
     final Set<Integer> satisfiedStartIds = new HashSet<>();
     int lastSatisfiedStartId;
     boolean retiring;
+    // A consumed voluntary alarm must not suppress a later genuine framework timeout
+    // when both native teardown attempts failed and the FGS is still active.
+    boolean voluntaryRetirement;
     boolean retired;
 
     ForegroundEpoch(long runGeneration, boolean ambiguousPromotion, int startId) {
@@ -122,13 +131,30 @@ public class ForegroundService extends Service {
   }
 
   // Caller holds both locks, after the actual promotion returned normally.
-  private void commitForegroundEpoch() {
+  private boolean commitForegroundEpoch() {
     ForegroundEpoch previous = mForegroundEpoch;
+    long generation = sRunGeneration;
+    long runGeneration = mRunGeneration;
+    int startId = mLastStartId;
+    if (mAlarmPoc != null) {
+      ForegroundServiceRunLimitScheduler.marker(
+          "ARM_RETIRED", mAlarmPoc, "promotion epoch replaced; no automatic rearm");
+    }
+    invalidateAlarmPoc();
+    // Cancellation crosses IPC/storage. Neither this commit nor its caller may overwrite
+    // a successor admitted while the old ticket was being cancelled.
+    if (sInstance != this
+        || sStateOwner != this
+        || mForegroundEpoch != previous
+        || sRunGeneration != generation
+        || mRunGeneration != runGeneration
+        || mLastStartId != startId) return false;
     mForegroundEpoch =
         new ForegroundEpoch(
             mRunGeneration,
             previous != null && previous.runGeneration == mRunGeneration,
             mLastStartId);
+    return true;
   }
 
   // Snapshot before platform IPC; a reply cannot acquire authority over a reentrant successor.
@@ -203,6 +229,8 @@ public class ForegroundService extends Service {
     // Dispatch acceptance is distinct from the promotion outcome and the physical instance's
     // obligation. A denied delivered request is terminal even while its sender's reply is pending.
     boolean promotionDenied;
+    ForegroundServiceRunLimitScheduler.Request alarmPoc;
+    ForegroundEpoch alarmPocEpoch;
     // Null until delivery. An unfulfilled delivered request belongs to that physical instance.
     ForegroundService instance;
 
@@ -269,6 +297,7 @@ public class ForegroundService extends Service {
     synchronized (sLifecycleLock) {
       if (sInstance != null) {
         sInstance.mDeniedStartRecovery = null;
+        sInstance.invalidateAlarmPoc();
       }
       sInstance = this;
       mRunGeneration = sRunGeneration;
@@ -282,6 +311,7 @@ public class ForegroundService extends Service {
   @Override
   public void onDestroy() {
     synchronized (sLifecycleLock) {
+      invalidateAlarmPoc();
       mDeniedStartRecovery = null;
       sPendingStarts.values().removeIf(request -> request.instance == this);
       if (sInstance == this) {
@@ -311,8 +341,10 @@ public class ForegroundService extends Service {
   }
 
   private void clearOwnedState() {
+    ForegroundServiceRunLimitScheduler.Ticket ticket = null;
     synchronized (sLock) {
       if (sStateOwner == this) {
+        ticket = revokeAlarmPoc();
         mDeniedStartRecovery = null;
         clearCurrentState();
         mRunnerToken = null;
@@ -321,6 +353,8 @@ public class ForegroundService extends Service {
         }
       }
     }
+    // Finish A's local retirement before cancellation can synchronously admit a successor.
+    if (ticket != null) ForegroundServiceRunLimitScheduler.cancel(ticket);
   }
 
   /**
@@ -354,7 +388,46 @@ public class ForegroundService extends Service {
     }
   }
 
+  // Internal smoke entrypoint, deliberately absent from Notifee/React Native public APIs.
+  static void startAlarmPoc(
+      int hashCode,
+      Notification notification,
+      Bundle notificationBundle,
+      String run,
+      long requestedDurationMs) {
+    start(
+        hashCode,
+        notification,
+        notificationBundle,
+        new ForegroundServiceRunLimitScheduler.Request(
+            ContextHolder.getApplicationContext(), run, requestedDurationMs));
+  }
+
   static void start(int hashCode, Notification notification, Bundle notificationBundle) {
+    app.notifee.core.model.NotificationAndroidModel android =
+        NotificationModel.fromBundle(notificationBundle).getAndroid();
+    Long duration = android.getForegroundServiceBestEffortStopAfterMs();
+    ForegroundServiceRunLimitScheduler.Request request = null;
+    if (duration != null) {
+      // The model rejects this too; keep the platform guard explicit at API-specific calls.
+      if (Build.VERSION.SDK_INT < 35) {
+        throw new IllegalArgumentException(
+            "notification.android.foregroundServiceBestEffortStopAfterMs requires API 35+");
+      }
+      int type = android.getForegroundServiceType();
+      if (type == ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST) type = resolveManifestServiceType();
+      request =
+          ForegroundServiceRunLimitScheduler.publicRequest(
+              ContextHolder.getApplicationContext(), duration, type);
+    }
+    start(hashCode, notification, notificationBundle, request);
+  }
+
+  private static void start(
+      int hashCode,
+      Notification notification,
+      Bundle notificationBundle,
+      ForegroundServiceRunLimitScheduler.Request alarmPoc) {
     Context context = ContextHolder.getApplicationContext();
     if (context == null) {
       Logger.e(TAG, "Application context is null; cannot start ForegroundService.");
@@ -395,8 +468,35 @@ public class ForegroundService extends Service {
       intent.putExtra(START_REQUEST_ID, requestId);
       StartRequest request;
       synchronized (sLifecycleLock) {
+        if (alarmPoc != null
+            && (!sPendingStarts.isEmpty()
+                || (sInstance != null
+                    && (sInstance.mForegroundActive || sInstance.mRunnerToken != null)))) {
+          if (!alarmPoc.publicOption)
+            throw new IllegalStateException("Diagnostic arming requires a new quiescent run");
+          // Repeating the same option on an owned same-ID update is accepted without rearming.
+          // Enabling/changing it during an existing run or unresolved START is rejected
+          // pre-dispatch.
+          synchronized (sLock) {
+            ForegroundService owner = sInstance;
+            String id = NotificationModel.fromBundle(notificationBundle).getId();
+            if (!sPendingStarts.isEmpty()
+                || owner == null
+                || owner.mAlarmPoc == null
+                || !owner.ownsAlarmPoc(owner.mAlarmPoc)
+                || !id.equals(mCurrentNotificationId)
+                || alarmPoc.duration != owner.mAlarmPoc.duration) {
+              throw new IllegalArgumentException(
+                  "notification.android.foregroundServiceBestEffortStopAfterMs cannot be enabled or"
+                      + " changed during an active/pending run; stop and start a new run");
+            }
+          }
+          alarmPoc = null;
+        }
         request = new StartRequest(sRunGeneration, sStopRequest);
+        request.alarmPoc = alarmPoc;
         sPendingStarts.put(requestId, request);
+        sStartAdmissionRevision++;
       }
       ComponentName component;
       try {
@@ -455,8 +555,11 @@ public class ForegroundService extends Service {
       if (sInstance != null) {
         sInstance.mDeniedStartRecovery = null;
       }
+      // Order STOP before cancellation IPC/storage: a reentrant later START must observe
+      // and be able to supersede this request, rather than inherit an outer stale STOP.
       sStopRequest = new Object();
       sRunGeneration++;
+      if (sInstance != null) sInstance.invalidateAlarmPoc();
       scheduleStop();
     }
   }
@@ -599,7 +702,22 @@ public class ForegroundService extends Service {
       boolean terminal =
           intent == null || STOP_FOREGROUND_SERVICE_ACTION.equals(intent.getAction());
       if (terminal) {
-        sRunGeneration++;
+        long generation = ++sRunGeneration;
+        long admission = sStartAdmissionRevision;
+        long runGeneration = mRunGeneration;
+        ForegroundEpoch epoch = mForegroundEpoch;
+        invalidateAlarmPoc();
+        // This terminal delivery predates every START accepted during cancellation, including
+        // an undelivered obligation whose startId/epoch cannot yet reveal the new admission.
+        if (sInstance != this
+            || sStateOwner != this
+            || sRunGeneration != generation
+            || sStartAdmissionRevision != admission
+            || mRunGeneration != runGeneration
+            || mForegroundEpoch != epoch
+            || mLastStartId != startId) {
+          return START_STICKY_COMPATIBILITY;
+        }
       }
       if (terminal && !sPendingStarts.isEmpty()) {
         // The earlier accepted START must promote with its real notification/type first.
@@ -629,6 +747,7 @@ public class ForegroundService extends Service {
         if (!superseded && mRunGeneration != generation) {
           // Reserve the new session without retiring the previous submitted state or runner.
           // A failed promotion must preserve them, while older deliveries remain fenced.
+          invalidateAlarmPoc();
           mRunGeneration = generation;
         }
       }
@@ -649,6 +768,7 @@ public class ForegroundService extends Service {
             recordSatisfiedStart(startId);
           }
           settleDeliveredStarts();
+          if (!terminal && !superseded) maybeArmAlarmPoc(request);
         }
         if (superseded
             && mStartCommandSatisfied
@@ -878,7 +998,9 @@ public class ForegroundService extends Service {
               }
 
               if (!noneEarlyReturn && deniedInitialPromotion == null) {
-                commitForegroundEpoch();
+                if (!commitForegroundEpoch()) return START_NOT_STICKY;
+                if (request != null && request.alarmPoc != null)
+                  request.alarmPocEpoch = mForegroundEpoch;
                 mCurrentNotificationId = notificationId;
                 mCurrentNotificationBundle = bundle;
                 mCurrentNotification = notification;
@@ -979,7 +1101,7 @@ public class ForegroundService extends Service {
                   mStartForegroundCalled = true;
                   mForegroundActive = true;
                   mStartCommandSatisfied = true;
-                  commitForegroundEpoch();
+                  if (!commitForegroundEpoch()) return START_NOT_STICKY;
                 }
                 // The platform call returned normally, so cache the latest submitted state for
                 // re-post and timeout. A normal return does not acknowledge display.
@@ -1309,6 +1431,7 @@ public class ForegroundService extends Service {
   private void handleTimeout(int startId, int fgsType, boolean shortServiceCallback) {
     Bundle notificationBundle;
     ForegroundEpoch epoch;
+    ForegroundServiceRunLimitScheduler.Ticket timeoutAlarm;
     RuntimeException primary = null;
     String demotionOutcome = "failed";
     String stopOutcome = "deferred";
@@ -1323,7 +1446,7 @@ public class ForegroundService extends Service {
         if (sInstance != this
             || sStateOwner != this
             || epoch == null
-            || epoch.retiring
+            || (epoch.retiring && !epoch.voluntaryRetirement)
             || epoch.retired
             || !mForegroundActive
             || (mRunFirstStartId != 0 && startId < mRunFirstStartId)
@@ -1343,6 +1466,8 @@ public class ForegroundService extends Service {
             mCurrentNotificationBundle == null ? null : new Bundle(mCurrentNotificationBundle);
         mTimeoutStartIds.add(startId);
         epoch.retiring = true;
+        epoch.voluntaryRetirement = false;
+        timeoutAlarm = revokeAlarmPoc();
       }
 
       // Nothing that posts an event, converts a model or retires owned evidence precedes this.
@@ -1379,6 +1504,8 @@ public class ForegroundService extends Service {
         }
       }
     }
+
+    if (timeoutAlarm != null) ForegroundServiceRunLimitScheduler.cancel(timeoutAlarm);
 
     // Consume publication authority once, including when a reentrant caller still owns locks.
     final RuntimeException timeoutFailure = primary;
@@ -1428,5 +1555,268 @@ public class ForegroundService extends Service {
         });
     publishTimeoutEventsIfUnlocked();
     if (primary != null) throw primary;
+  }
+
+  // All diagnostic authority is subordinate to the existing lifecycle/epoch registry.
+  // Caller holds sLifecycleLock; nested state checks always take sLock second.
+  private void invalidateAlarmPoc() {
+    ForegroundServiceRunLimitScheduler.Ticket ticket = revokeAlarmPoc();
+    if (ticket != null) ForegroundServiceRunLimitScheduler.cancel(ticket);
+  }
+
+  private ForegroundServiceRunLimitScheduler.Ticket revokeAlarmPoc() {
+    ForegroundServiceRunLimitScheduler.Ticket ticket = mAlarmPoc;
+    mAlarmPoc = null;
+    if (ticket != null) ticket.valid = false;
+    return ticket;
+  }
+
+  private void maybeArmAlarmPoc(StartRequest request) {
+    if (request == null || request.alarmPoc == null || Build.VERSION.SDK_INT < 35) return;
+    synchronized (sLock) {
+      ForegroundEpoch epoch = mForegroundEpoch;
+      if ((!request.alarmPoc.publicOption && mAlarmPocAttemptedRun == mRunGeneration)
+          || request.alarmPocEpoch != epoch) {
+        ForegroundServiceRunLimitScheduler.marker(
+            "ARM_REJECTED", null, "no new diagnostic promotion/run");
+        return;
+      }
+      mAlarmPocAttemptedRun = mRunGeneration;
+      if (sInstance != this
+          || sStateOwner != this
+          || epoch == null
+          || epoch.retiring
+          || epoch.retired
+          || !mForegroundActive
+          || !mStartCommandSatisfied
+          || epoch.runGeneration != mRunGeneration
+          || sRunGeneration != mRunGeneration
+          || epoch.lastSatisfiedStartId != mLastStartId
+          || mStopInitiated
+          || mCurrentForegroundServiceType != ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) {
+        ForegroundServiceRunLimitScheduler.marker(
+            "ARM_REJECTED", null, "requires current single dataSync epoch");
+        return;
+      }
+      ForegroundServiceRunLimitScheduler.Ticket ticket = null;
+      try {
+        // Promotion has already returned; no ledger/GC I/O is added to default START latency.
+        if (request.alarmPoc.publicOption) ForegroundServiceRunLimitScheduler.collectOrphans(this);
+        ticket =
+            new ForegroundServiceRunLimitScheduler.Ticket(
+                this,
+                epoch,
+                sRunGeneration,
+                mRunGeneration,
+                request.alarmPoc,
+                epoch.promotedElapsed);
+        // Ticket construction reads boot identity through a platform API. Revalidate after it.
+        if (sInstance != this
+            || sStateOwner != this
+            || mForegroundEpoch != epoch
+            || epoch.retiring
+            || epoch.retired
+            || sRunGeneration != ticket.generation
+            || mRunGeneration != ticket.runGeneration) {
+          ForegroundServiceRunLimitScheduler.cancel(ticket);
+          return;
+        }
+        mAlarmPoc = ticket;
+        if (!ForegroundServiceRunLimitScheduler.arm(ticket) || !ownsAlarmPoc(ticket)) {
+          if (mAlarmPoc == ticket) mAlarmPoc = null;
+          ForegroundServiceRunLimitScheduler.cancel(ticket);
+        }
+      } catch (org.json.JSONException | RuntimeException failure) {
+        // Construction/storage may have admitted B reentrantly. Cleanup belongs only to A.
+        if (ticket != null) {
+          if (mAlarmPoc == ticket) mAlarmPoc = null;
+          ForegroundServiceRunLimitScheduler.cancel(ticket);
+        }
+        ForegroundServiceRunLimitScheduler.marker("ARM_FAILED", ticket, failure.toString());
+      }
+    }
+  }
+
+  String alarmPocInstanceId() {
+    if (mAlarmPocInstanceId == null) mAlarmPocInstanceId = UUID.randomUUID().toString();
+    return mAlarmPocInstanceId;
+  }
+
+  private boolean ownsAlarmPoc(ForegroundServiceRunLimitScheduler.Ticket ticket) {
+    return Build.VERSION.SDK_INT >= 35
+        && sInstance == this
+        && sStateOwner == this
+        && ticket.owner == this
+        && mAlarmPoc == ticket
+        && ticket.valid
+        && ticket.epoch == mForegroundEpoch
+        && sRunGeneration == ticket.generation
+        && mRunGeneration == ticket.runGeneration
+        && mForegroundEpoch != null
+        && mForegroundEpoch.runGeneration == ticket.runGeneration
+        && !mForegroundEpoch.retiring
+        && !mForegroundEpoch.retired
+        && mForegroundActive
+        && mCurrentForegroundServiceType == ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        && mStartCommandSatisfied
+        && mLastStartId != 0
+        && mLastStartId == mForegroundEpoch.lastSatisfiedStartId
+        && !mStartCommandFailed
+        && !mStopInitiated;
+  }
+
+  static void receiveAlarmPoc(Intent intent) {
+    try {
+      synchronized (sLifecycleLock) {
+        ForegroundService owner = sInstance;
+        if (owner == null) {
+          ForegroundServiceRunLimitScheduler.marker(
+              "NO_MATCHING_LIVE_INSTANCE", null, "cold delivery");
+          return;
+        }
+        owner.expireAlarmPoc(intent);
+      }
+    } finally {
+      publishTimeoutEventsIfUnlocked();
+    }
+  }
+
+  private void expireAlarmPoc(Intent intent) {
+    final ForegroundServiceRunLimitScheduler.Ticket ticket;
+    final ForegroundEpoch epoch;
+    final StopAuthority stop;
+    final Bundle notificationBundle;
+    final long deliveredElapsed;
+    String demotionOutcome = "failed";
+    String stopOutcome = "deferred";
+    synchronized (sLock) {
+      ticket = mAlarmPoc;
+      if (ticket == null
+          || !ownsAlarmPoc(ticket)
+          || !ForegroundServiceRunLimitScheduler.matches(ticket, intent)) {
+        ForegroundServiceRunLimitScheduler.marker(
+            "ALARM_STALE", null, "no matching live authority");
+        return;
+      }
+      ForegroundServiceRunLimitScheduler.marker("ALARM_DELIVERED", ticket, "native receiver");
+      if (!ForegroundServiceRunLimitScheduler.ledgerMatches(ticket)) {
+        if (mAlarmPoc == ticket) invalidateAlarmPoc();
+        ForegroundServiceRunLimitScheduler.marker(
+            "LEDGER_INVALID", ticket, "no teardown authority");
+        return;
+      }
+      long now = SystemClock.elapsedRealtime();
+      if (now < ticket.deadline) {
+        ForegroundServiceRunLimitScheduler.marker("ALARM_EARLY", ticket, "no demotion");
+        return;
+      }
+      if (now > ticket.deadline) {
+        ForegroundServiceRunLimitScheduler.marker(
+            "ALARM_LATE", ticket, "delayMs=" + (now - ticket.deadline));
+      }
+      // Boot/ledger validation crosses platform APIs. It cannot transfer the old alarm's
+      // authority to a successor that appeared while those calls were in progress.
+      if (!ownsAlarmPoc(ticket)) {
+        ForegroundServiceRunLimitScheduler.marker(
+            "ALARM_STALE", ticket, "owner changed during validation");
+        return;
+      }
+      epoch = mForegroundEpoch;
+      stop = captureStopAuthority();
+      deliveredElapsed = now;
+      notificationBundle =
+          mCurrentNotificationBundle == null ? null : new Bundle(mCurrentNotificationBundle);
+      mAlarmPoc = null;
+      ticket.valid = false;
+      epoch.retiring = true;
+      epoch.voluntaryRetirement = true;
+    }
+    try {
+      ForegroundServiceRunLimitScheduler.marker(
+          "DEMOTION_ATTEMPTED",
+          ticket,
+          "REMOVE notificationId="
+              + mCurrentNotificationId
+              + " startId="
+              + stop.startId
+              + " satisfiedStartId="
+              + epoch.lastSatisfiedStartId
+              + " pendingStarts="
+              + sPendingStarts.size());
+      try {
+        removeForegroundNotification();
+        demotionOutcome = "returned";
+        ForegroundServiceRunLimitScheduler.marker(
+            "DEMOTION_RETURNED", ticket, "not an AMS acknowledgement");
+        retireTimeoutEpoch(epoch);
+      } catch (RuntimeException failure) {
+        ForegroundServiceRunLimitScheduler.marker("DEMOTION_FAILED", ticket, failure.toString());
+      }
+      if (ownsTimeoutEpoch(epoch)
+          && epoch.runGeneration == mRunGeneration
+          && epoch.runGeneration == sRunGeneration
+          && ownsStopAuthority(stop)
+          && mLastStartId == epoch.lastSatisfiedStartId
+          && mLastStartId != 0
+          && !mStartCommandFailed
+          && !mStopInitiated) {
+        try {
+          stopOutcome = "failed";
+          boolean stopped = stopSelfResult(stop.startId);
+          stopOutcome = stopped ? "accepted" : "refused";
+          ForegroundServiceRunLimitScheduler.marker(
+              stopped ? "STOP_ACCEPTED" : "STOP_REFUSED", ticket, "startId=" + stop.startId);
+          if (stopped && ownsTimeoutEpoch(epoch) && ownsStopAuthority(stop)) {
+            mStopInitiated = true;
+            retireTimeoutEpoch(epoch);
+          }
+        } catch (RuntimeException failure) {
+          ForegroundServiceRunLimitScheduler.marker("STOP_FAILED", ticket, failure.toString());
+        }
+      } else {
+        ForegroundServiceRunLimitScheduler.marker(
+            "STOP_DEFERRED", ticket, "pending/unknown START or ownership changed");
+      }
+      ForegroundServiceRunLimitScheduler.marker(
+          "NATIVE_FINAL_STATE",
+          ticket,
+          "sameEpoch="
+              + ownsTimeoutEpoch(epoch)
+              + " foregroundActive="
+              + mForegroundActive
+              + " stopInitiated="
+              + mStopInitiated
+              + " pendingStarts="
+              + sPendingStarts.size());
+    } finally {
+      ForegroundServiceRunLimitScheduler.cancel(ticket);
+    }
+    if (ticket.publicOption && notificationBundle != null) {
+      Bundle metadata = new Bundle();
+      metadata.putLong("requestedDurationMs", ticket.duration);
+      metadata.putLong("deadlineElapsed", ticket.deadline);
+      metadata.putLong("deliveredElapsed", deliveredElapsed);
+      metadata.putString("demotion", demotionOutcome);
+      metadata.putString("conditionalStop", stopOutcome);
+      List<Runnable> publications = sTimeoutPublications.get();
+      if (publications == null) {
+        publications = new ArrayList<>();
+        sTimeoutPublications.set(publications);
+      }
+      publications.add(
+          () -> {
+            try {
+              Bundle extras = new Bundle();
+              extras.putBundle("foregroundServiceRunLimit", metadata);
+              EventBus.post(
+                  new NotificationEvent(
+                      NotificationEvent.TYPE_FG_RUN_LIMIT_REACHED,
+                      NotificationModel.fromBundle(notificationBundle),
+                      extras));
+            } catch (RuntimeException failure) {
+              ForegroundServiceRunLimitScheduler.marker("EVENT_FAILED", ticket, failure.toString());
+            }
+          });
+    }
   }
 }

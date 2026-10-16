@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2016-present Invertase Limited
  */
-import { Image } from 'react-native';
+import { Image, Platform } from 'react-native';
 
 import {
   objectHasProperty,
@@ -124,6 +124,31 @@ export default function validateAndroidNotification(
     }
 
     out.asForegroundService = android.asForegroundService;
+  }
+
+  const runLimit = android.foregroundServiceBestEffortStopAfterMs;
+  if (!isUndefined(runLimit)) {
+    const path = "'notification.android.foregroundServiceBestEffortStopAfterMs'";
+    if (!Number.isSafeInteger(runLimit) || runLimit < 60000 || runLimit > 18000000) {
+      throw new Error(`${path} expected a safe integer between 60000 and 18000000 milliseconds.`);
+    }
+    if (!out.asForegroundService) {
+      throw new Error(`${path} requires asForegroundService: true.`);
+    }
+    if (Platform.OS === 'android' && Number(Platform.Version) < 35) {
+      throw new Error(`${path} requires Android API 35+.`);
+    }
+    if (
+      android.foregroundServiceTypes !== undefined &&
+      (!isArray(android.foregroundServiceTypes) ||
+        android.foregroundServiceTypes.length !== 1 ||
+        android.foregroundServiceTypes[0] !==
+          AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+    ) {
+      throw new Error(`${path} requires a single dataSync foreground service type.`);
+    }
+    // An omitted type is resolved and checked against the merged manifest before native START.
+    out.foregroundServiceBestEffortStopAfterMs = runLimit;
   }
 
   /**

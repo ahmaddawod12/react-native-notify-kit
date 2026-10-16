@@ -40,6 +40,16 @@ export interface NotificationAndroid {
   asForegroundService?: boolean;
 
   /**
+   * Best-effort attempt to demote (REMOVE) and stop a single dataSync foreground run.
+   * Android API 35+ only. Disabled when undefined. Integer milliseconds, 60,000–18,000,000.
+   * Measured from the first successful promotion using elapsed realtime, including sleep.
+   * Same-ID updates do not extend the deadline; changing/enabling it requires a new run.
+   * Inexact alarms may arrive minutes late or never. A resolved displayNotification Promise
+   * does not confirm scheduling. This does not cancel JavaScript or application work.
+   */
+  foregroundServiceBestEffortStopAfterMs?: number;
+
+  /**
    * When set to `true` the screen will light up when the notification is displayed.
    *
    * Defaults to `false`.

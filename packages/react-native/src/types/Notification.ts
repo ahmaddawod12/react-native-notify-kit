@@ -428,6 +428,10 @@ export enum EventType {
    * @platform android
    */
   FG_TIMEOUT = 9,
+
+  /** Best-effort Android voluntary run-limit handling, after native teardown attempts.
+   * Does not certify AMS teardown, task completion or JavaScript cancellation. */
+  FG_RUN_LIMIT_REACHED = 10,
 }
 
 /**
@@ -436,6 +440,15 @@ export enum EventType {
  * View the [Events](/react-native/events) documentation to learn more.
  */
 export interface EventDetail {
+  /** Native handling of an accepted voluntary expiry; no delivery guarantee. */
+  foregroundServiceRunLimit?: {
+    requestedDurationMs: number;
+    deadlineElapsed: number;
+    deliveredElapsed: number;
+    demotion: 'returned' | 'failed';
+    conditionalStop: 'accepted' | 'refused' | 'deferred' | 'failed';
+  };
+
   /**
    * The notification this event relates to.
    *

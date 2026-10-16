@@ -25,6 +25,10 @@
       android:theme="@android:style/Theme.Translucent.NoTitleBar"
       android:exported="true" />
 
+    <receiver
+      android:name="app.notifee.core.ForegroundServiceRunLimitReceiver"
+      android:exported="false" />
+
     <!-- Foreground Service -->
     <service
       android:name="app.notifee.core.ForegroundService"
