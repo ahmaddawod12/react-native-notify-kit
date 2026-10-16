@@ -6,7 +6,7 @@
 
 # Interface: EventDetail
 
-Defined in: [packages/react-native/src/types/Notification.ts:427](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L427)
+Defined in: [packages/react-native/src/types/Notification.ts:442](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L442)
 
 An interface representing the different detail values which can be provided with a notification event.
 
@@ -18,7 +18,7 @@ View the [Events](/react-native/events) documentation to learn more.
 
 > `optional` **blocked?**: `boolean`
 
-Defined in: [packages/react-native/src/types/Notification.ts:496](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L496)
+Defined in: [packages/react-native/src/types/Notification.ts:521](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L521)
 
 The notification blocked status of your entire application.
 
@@ -34,7 +34,7 @@ android API Level >= 28
 
 > `optional` **channel?**: [`NativeAndroidChannel`](react-native/reference/Interface.NativeAndroidChannel)
 
-Defined in: [packages/react-native/src/types/Notification.ts:476](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L476)
+Defined in: [packages/react-native/src/types/Notification.ts:501](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L501)
 
 The channel that had its block state changed.
 
@@ -52,7 +52,7 @@ android API Level >= 28
 
 > `optional` **channelGroup?**: [`NativeAndroidChannelGroup`](react-native/reference/Interface.NativeAndroidChannelGroup)
 
-Defined in: [packages/react-native/src/types/Notification.ts:487](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L487)
+Defined in: [packages/react-native/src/types/Notification.ts:512](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L512)
 
 The channel group that had its block state changed.
 
@@ -66,11 +66,56 @@ android API Level >= 28
 
 ---
 
+### fgsType?
+
+> `optional` **fgsType?**: `number`
+
+Defined in: [packages/react-native/src/types/Notification.ts:536](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L536)
+
+The Foreground Service type reported by Android's timeout callback for `EventType.FG_TIMEOUT`.
+A value of `-1` is preserved when the callback overload does not provide an explicit type.
+
+#### Platform
+
+android
+
+---
+
+### foregroundServiceRunLimit?
+
+> `optional` **foregroundServiceRunLimit?**: `object`
+
+Defined in: [packages/react-native/src/types/Notification.ts:444](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L444)
+
+Native handling of an accepted voluntary expiry; no delivery guarantee.
+
+#### conditionalStop
+
+> **conditionalStop**: `"failed"` | `"accepted"` | `"refused"` | `"deferred"`
+
+#### deadlineElapsed
+
+> **deadlineElapsed**: `number`
+
+#### deliveredElapsed
+
+> **deliveredElapsed**: `number`
+
+#### demotion
+
+> **demotion**: `"returned"` | `"failed"`
+
+#### requestedDurationMs
+
+> **requestedDurationMs**: `number`
+
+---
+
 ### input?
 
 > `optional` **input?**: `string`
 
-Defined in: [packages/react-native/src/types/Notification.ts:465](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L465)
+Defined in: [packages/react-native/src/types/Notification.ts:490](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L490)
 
 The input from a notification action.
 
@@ -89,7 +134,7 @@ android API Level >= 20
 
 > `optional` **notification?**: [`Notification`](react-native/reference/Interface.Notification)
 
-Defined in: [packages/react-native/src/types/Notification.ts:440](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L440)
+Defined in: [packages/react-native/src/types/Notification.ts:465](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L465)
 
 The notification this event relates to.
 
@@ -101,6 +146,7 @@ The notification details is available when the [`EventType`](/react-native/refer
 - [`EventType.DELIVERED`](/react-native/reference/eventtype#delivered)
 - [`EventType.TRIGGER_NOTIFICATION_CREATED`](/react-native/reference/eventtype#trigger_notification_created)
 - [`EventType.FG_ALREADY_EXIST`](/react-native/reference/eventtype#fg_already_exist)
+- [`EventType.FG_TIMEOUT`](/react-native/reference/eventtype#fg_timeout)
 
 ---
 
@@ -108,7 +154,7 @@ The notification details is available when the [`EventType`](/react-native/refer
 
 > `optional` **pressAction?**: [`NotificationPressAction`](react-native/reference/Interface.NotificationPressAction)
 
-Defined in: [packages/react-native/src/types/Notification.ts:453](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L453)
+Defined in: [packages/react-native/src/types/Notification.ts:478](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L478)
 
 The press action which triggered the event.
 
@@ -119,3 +165,17 @@ The press action details is available when the [`EventType`](/react-native/refer
 
 - [`EventType.PRESS`](/react-native/reference/eventtype#press)
 - [`EventType.ACTION_PRESS`](/react-native/reference/eventtype#action_press)
+
+---
+
+### startId?
+
+> `optional` **startId?**: `number`
+
+Defined in: [packages/react-native/src/types/Notification.ts:528](https://github.com/marcocrupi/react-native-notify-kit/blob/main/packages/react-native/src/types/Notification.ts#L528)
+
+The start command identifier reported by Android's timeout callback for `EventType.FG_TIMEOUT`.
+
+#### Platform
+
+android

@@ -701,6 +701,16 @@ Android 15 (API 35) tightens foreground service restrictions further:
 
 See the [Foreground Service guide](docs/react-native/android/foreground-service.mdx#android-15-data-sync-timeouts) for timeout handling, interruptible tasks, and the limits of [Issue #82](https://github.com/marcocrupi/react-native-notify-kit/issues/82).
 
+**Unreleased: optional best-effort run limit.** Set `android.foregroundServiceBestEffortStopAfterMs` to request a voluntary
+stop attempt for a single `dataSync` foreground run on Android API 35+. It is disabled by default and accepts safe integer
+milliseconds from 60,000 to 18,000,000, starting at the first successful promotion. Same-ID updates do not extend it.
+The internal inexact AlarmManager alarm may arrive minutes late or never; this is not a hard maximum, does not cancel
+JavaScript work, and has not been shown to eliminate vivo/iQOO/OEM timeout crashes. Native handling uses REMOVE and
+selective stopping; the separate best-effort `FG_RUN_LIMIT_REACHED = 10` event does not certify AMS teardown.
+A resolved `displayNotification()` Promise does not confirm alarm scheduling. See the
+[complete contract, failure diagnostics and copyable example](docs/react-native/android/foreground-service.mdx#voluntary-best-effort-run-limit-api-35)
+for validation, process-recreation limits and cooperative cancellation.
+
 If you target API 35+, audit your `foregroundServiceType` choice against the matrix above before shipping. The canonical reference is the [Android 15 foreground service behavior changes](https://developer.android.com/about/versions/15/behavior-changes-15#fgs-changes) documentation.
 
 ### OEM Background Restrictions
