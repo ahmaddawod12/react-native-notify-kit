@@ -1,4 +1,4 @@
-import { NativeModulesStatic } from 'react-native';
+import type { NativeModules } from 'react-native';
 import NotifeeJSEventEmitter from './NotifeeJSEventEmitter';
 
 export interface NativeModuleConfig {
@@ -19,7 +19,7 @@ export default class NotifeeNativeModule {
     return NotifeeJSEventEmitter;
   }
 
-  public get native(): NativeModulesStatic {
+  public get native(): typeof NativeModules {
     return {};
   }
 }

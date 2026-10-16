@@ -139,6 +139,18 @@ android {
   }
 
   testOptions.unitTests.all {
+    // RN pins compilation to Java 17. Run tests on the selected build JDK so a JDK 21
+    // invocation can simulate newer Android APIs without changing the bytecode target.
+    javaLauncher = javaToolchains.launcherFor {
+      languageVersion = JavaLanguageVersion.of(jvmMajorVersion)
+    }
+    // Robolectric's API 36+ FileDescriptor interceptor accesses SharedSecrets on Java 21.
+    jvmArgs '--add-opens=java.base/jdk.internal.access=ALL-UNNAMED'
+    // Simulation SDKs are independent of compileSdk. API 36/37 require a JDK 21 test JVM;
+    // JDK 17 can select earlier APIs with -Drobolectric.enabledSdks=24,26,28,29,30,31,32,33,34,35.
+    if (System.getProperty('robolectric.enabledSdks') != null) {
+      systemProperty 'robolectric.enabledSdks', System.getProperty('robolectric.enabledSdks')
+    }
     testLogging {
       events "failed", "skipped"
       showStackTraces = true
@@ -198,7 +210,7 @@ dependencies {
 
   // --- Test dependencies ---
   testImplementation 'junit:junit:4.13.2' // https://github.com/junit-team/junit4/releases
-  testImplementation 'org.robolectric:robolectric:4.14.1' // https://github.com/robolectric/robolectric/releases
+  testImplementation 'org.robolectric:robolectric:4.17' // https://github.com/robolectric/robolectric/releases
   testImplementation 'org.mockito:mockito-core:5.19.0' // https://github.com/mockito/mockito/releases
   androidTestImplementation 'androidx.test.ext:junit:1.1.3' // https://developer.android.com/jetpack/androidx/releases/test
   androidTestImplementation 'androidx.test.espresso:espresso-core:3.4.0' // see above

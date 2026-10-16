@@ -119,7 +119,7 @@ public class ForegroundServiceTest {
 
   @Test
   @Config(
-      sdk = {34, 35},
+      sdk = {34, 35, 37},
       shadows = SliceAShadowService.class)
   public void sliceA_demotionPrecedesDestructiveRetirementAndEventWork() throws Exception {
     ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
@@ -221,7 +221,9 @@ public class ForegroundServiceTest {
   }
 
   @Test
-  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  @Config(
+      sdk = {35, 37},
+      shadows = SliceAShadowService.class)
   public void sliceA_reservedUnknownAndAcceptedUndeliveredStartsRemainHeld() throws Exception {
     ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
     RecordingServiceContext context = useRecordingContext();
@@ -338,7 +340,9 @@ public class ForegroundServiceTest {
   }
 
   @Test
-  @Config(sdk = 35, shadows = SliceAShadowService.class)
+  @Config(
+      sdk = {35, 37},
+      shadows = SliceAShadowService.class)
   public void sliceA_demotionThrowPreservesEvidenceAndPrimaryEvenWhenStopThrows() throws Exception {
     ForegroundService service = sliceAService(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
     Object runner = issue81Field(service, "mRunnerToken");
@@ -1047,7 +1051,8 @@ public class ForegroundServiceTest {
     }
 
     @Implementation
-    protected void startForeground(int id, Notification notification, int foregroundServiceType) {
+    protected void startForeground(int id, Notification notification, int foregroundServiceType)
+        throws Exception {
       if (promotionFailure != null) throw promotionFailure;
       promotions++;
       foreground = true;
@@ -1272,7 +1277,9 @@ public class ForegroundServiceTest {
   }
 
   @Test
-  @Config(sdk = 35, shadows = Issue81ShadowService.class)
+  @Config(
+      sdk = {35, 37},
+      shadows = Issue81ShadowService.class)
   public void issue82_pendingB_definiteRejectionReevaluatesRecovery_unknownDoesNot()
       throws Exception {
     for (RuntimeException reply :
@@ -1824,7 +1831,7 @@ public class ForegroundServiceTest {
 
   @Test
   @Config(
-      sdk = {31, 33, 34, 35},
+      sdk = {31, 33, 34, 35, 37},
       shadows = Issue81ShadowService.class)
   public void issue81_retryFreshDenied_recoversWithoutClaimingPromotion() throws Exception {
     issue81AssertFreshRecovery(Service.START_FLAG_RETRY);
@@ -2030,7 +2037,9 @@ public class ForegroundServiceTest {
   }
 
   @Test
-  @Config(sdk = 33, shadows = Issue81ShadowService.class)
+  @Config(
+      sdk = {33, 37},
+      shadows = Issue81ShadowService.class)
   public void issue81_deniedA_withQueuedStop_promotesBBeforeStopping() throws Exception {
     RecordingServiceContext context = useRecordingContext();
     ForegroundService service = issue81Service();
@@ -2371,7 +2380,7 @@ public class ForegroundServiceTest {
 
   @Test
   @Config(
-      sdk = {31, 34},
+      sdk = {31, 34, 37},
       shadows = Issue81ShadowService.class)
   public void issue81_deferredRecovery_lateSecurityRejection_stops() throws Exception {
     issue81AssertLateRejection(new SecurityException("B rejected"));
@@ -3105,7 +3114,7 @@ public class ForegroundServiceTest {
     }
 
     @Implementation
-    protected void startForeground(int id, Notification notification) {
+    protected void startForeground(int id, Notification notification) throws Exception {
       if (!forwardingTyped) {
         recordPromotion(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE);
       }
@@ -3113,7 +3122,7 @@ public class ForegroundServiceTest {
     }
 
     @Implementation
-    protected void startForeground(int id, Notification notification, int type) {
+    protected void startForeground(int id, Notification notification, int type) throws Exception {
       recordPromotion(id, notification, type);
       // ShadowService's typed overload delegates to the two-argument shadow. Record only the
       // actual platform invocation so the witness cannot count that delegation as a second call.
@@ -4180,7 +4189,7 @@ public class ForegroundServiceTest {
   @Implements(Service.class)
   public static class DenyOldNotificationShadowService extends ShadowService {
     @Implementation
-    protected void startForeground(int id, Notification notification) {
+    protected void startForeground(int id, Notification notification) throws Exception {
       if ("B".equals(notification.extras.getString(Notification.EXTRA_TITLE))) {
         throw new ForegroundServiceStartNotAllowedException("real old START denied");
       }
@@ -5274,7 +5283,7 @@ public class ForegroundServiceTest {
   @Implements(Service.class)
   public static class RejectBStartForegroundShadowService extends ShadowService {
     @Implementation
-    protected void startForeground(int id, Notification notification) {
+    protected void startForeground(int id, Notification notification) throws Exception {
       if ("B".equals(notification.extras.getString(Notification.EXTRA_TITLE))) {
         throw new SecurityException("posting B rejected");
       }
@@ -5282,7 +5291,8 @@ public class ForegroundServiceTest {
     }
 
     @Implementation
-    protected void startForeground(int id, Notification notification, int foregroundServiceType) {
+    protected void startForeground(int id, Notification notification, int foregroundServiceType)
+        throws Exception {
       if ("B".equals(notification.extras.getString(Notification.EXTRA_TITLE))) {
         throw new SecurityException("posting B rejected");
       }

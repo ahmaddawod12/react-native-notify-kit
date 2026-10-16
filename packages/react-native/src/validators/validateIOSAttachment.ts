@@ -2,7 +2,6 @@
  * Copyright (c) 2016-present Invertase Limited
  */
 
-// @ts-ignore
 import { Image } from 'react-native';
 
 import {
@@ -42,6 +41,11 @@ export default function validateIOSAttachment(
 
   if (isNumber(attachment.url) || isObject(attachment.url)) {
     const image = Image.resolveAssetSource(attachment.url);
+    if (!image || !isString(image.uri) || /^[\s\u0085]*$/.test(image.uri)) {
+      throw new Error(
+        "'attachment.url' expected a React Native ImageResource value or a valid string URL.",
+      );
+    }
     out.url = image.uri;
   }
 

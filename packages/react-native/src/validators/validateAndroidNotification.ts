@@ -341,6 +341,11 @@ export default function validateAndroidNotification(
 
     if (isNumber(android.largeIcon) || isObject(android.largeIcon)) {
       const image = Image.resolveAssetSource(android.largeIcon);
+      if (!image || !isString(image.uri) || /^[\s\u0085]*$/.test(image.uri)) {
+        throw new Error(
+          "'notification.android.largeIcon' expected a React Native ImageResource value or a valid string URL.",
+        );
+      }
       out.largeIcon = image.uri;
     } else {
       out.largeIcon = android.largeIcon;

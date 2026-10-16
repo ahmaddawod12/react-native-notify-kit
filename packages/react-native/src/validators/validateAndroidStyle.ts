@@ -36,7 +36,11 @@ export function validateAndroidBigPictureStyle(
 
   if (isNumber(style.picture) || isObject(style.picture)) {
     const image = Image.resolveAssetSource(style.picture);
-
+    if (!image || !isString(image.uri) || /^[\s\u0085]*$/.test(image.uri)) {
+      throw new Error(
+        "'notification.android.style' BigPictureStyle: 'picture' expected a number or object created using the 'require()' method or a valid string URL.",
+      );
+    }
     out.picture = image.uri;
   }
 
@@ -53,7 +57,11 @@ export function validateAndroidBigPictureStyle(
     }
     if (isNumber(style.largeIcon) || isObject(style.largeIcon)) {
       const image = Image.resolveAssetSource(style.largeIcon);
-
+      if (!image || !isString(image.uri) || /^[\s\u0085]*$/.test(image.uri)) {
+        throw new Error(
+          "'notification.android.style' BigPictureStyle: 'largeIcon' expected a React Native ImageResource value or a valid string URL.",
+        );
+      }
       out.largeIcon = image.uri;
     } else {
       out.largeIcon = style.largeIcon;
