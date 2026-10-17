@@ -42,4 +42,7 @@ jobs:
       - name: Generate version.ts
         run: cd packages/react-native && npx genversion --es6 --semi src/version.ts
       - name: Jest
+        env:
+          # React is installed in the smoke workspace; Jest runs from packages/react-native.
+          NODE_PATH: ${{ github.workspace }}/apps/smoke/node_modules
         run: yarn tests_rn:test

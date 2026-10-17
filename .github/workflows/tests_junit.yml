@@ -38,7 +38,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Yarn Install
         uses: nick-fields/retry@v4
@@ -56,3 +56,12 @@ jobs:
 
       - name: Run JUnit Tests
         run: yarn test:core:android
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: junit-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/react-native/android/build/test-results/testDebugUnitTest/TEST-*.xml
+          if-no-files-found: error
+          retention-days: 14
