@@ -21,6 +21,8 @@ export default tseslint.config(
       '**/ios/**',
       'scripts/**',
       '**/plugin/build/**',
+      // Audited upstream Xcode parser/writer; preserve vendored source verbatim.
+      'packages/cli/vendor/**',
       'sendPushNotification.js',
       '**/version.ts',
       '**/version.js',

@@ -1,6 +1,6 @@
 {
   "extends": "./.releaserc.react-native-path-filter.js",
-  "tagFormat": "react-native-notify-kit@${version}",
+  "tagFormat": "v${version}",
   "plugins": [
     [
       "@semantic-release/commit-analyzer",

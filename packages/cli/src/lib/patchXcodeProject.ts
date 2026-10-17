@@ -1,5 +1,5 @@
 /**
- * Xcode project patching via xcode@3.x.
+ * Xcode project patching via the stable vendored xcode@3.0.1 compatibility layer.
  *
  * xcode@3.x has three known bugs that this module works around. See inline
  * comments tagged "xcode@3.x bug" for details. Do NOT remove these
@@ -14,7 +14,7 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import xcode from 'xcode';
+import xcode from './xcode';
 
 export type XcodeProject = ReturnType<typeof xcode.project>;
 
@@ -107,6 +107,10 @@ export function patchXcodeProjectForNotifyKitNse(
     },
     group.uuid,
   );
+  // The stable writer serializes undefined JS values as the bare word
+  // "undefined". addSourceFile also creates an unset explicitFileType;
+  // omit it on our new reference, preserving every existing reference.
+  fixSourceFileReference(proj, `${targetName}/NotificationService.swift`);
 
   // xcode@3.x bug: addTargetDependency() adds the dependency to an internal
   // cache but does not serialize it to the project hash, so writeSync()
@@ -215,6 +219,19 @@ function fixProductFileReference(proj: XcodeProject, targetName: string): void {
       // Remove broken fields that xcode@3.x sets to literal 'undefined'
       delete ref.fileEncoding;
       delete ref.lastKnownFileType;
+    }
+  }
+}
+
+function fixSourceFileReference(proj: XcodeProject, sourcePath: string): void {
+  const fileRefs = (proj as any).hash.project.objects.PBXFileReference;
+  if (!fileRefs) return;
+  for (const value of Object.values(fileRefs)) {
+    if (!value || typeof value !== 'object') continue;
+    const ref = value as Record<string, unknown>;
+    if (String(ref.path ?? '').replace(/^"|"$/g, '') !== sourcePath) continue;
+    for (const key of Object.keys(ref)) {
+      if (ref[key] === undefined) delete ref[key];
     }
   }
 }

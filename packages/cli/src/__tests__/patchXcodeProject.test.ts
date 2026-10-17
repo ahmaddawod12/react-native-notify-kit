@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import xcode from 'xcode';
+import xcode from '../lib/xcode';
 import { patchXcodeProject, patchXcodeProjectForNotifyKitNse } from '../lib/patchXcodeProject';
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'sample-rn-app');

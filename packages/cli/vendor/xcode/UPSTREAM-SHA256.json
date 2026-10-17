@@ -1,0 +1,12 @@
+{
+  "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+  "AUTHORS": "a0136d347a4a688fe9f65b964d72867c7c0d619634968371e844bf7f7a156691",
+  "index.js": "f0d2c583d281eba1bbeaf68fb4059b83e9a3e94129a5689f090b2b78a942d1a7",
+  "NOTICE": "0e5b0fe8d11e1627336bc6361de610ba8acf9a035fd73e07b5b4a0909a48371f",
+  "lib/pbxProject.js": "c4e97f21f0c4aed9a818b3f011ee0ad577a7899db8af2be243d1d7c08ba403fc",
+  "lib/pbxWriter.js": "f645aac4210b8a12c1ec052ef1b2d5663dd89271f15fba39be7aa7b8e64a586a",
+  "lib/pbxFile.js": "362454aebb5c01432f4d00d92ddcfb89a8345ee58e0816953ece33e48acd7a84",
+  "lib/parseJob.js": "68c9d540d532374c996107ff0d86b50c1ac47ac48a5d6c6821a3437aa320a46e",
+  "lib/parser/pbxproj.js": "9441d55c59a46a039b204bacf43f5b3ce5db29c5de1c61be552cbce8bf131ae2",
+  "lib/parser/pbxproj.pegjs": "6c4bd2992ff30e4f21158eea8575e5a12dd077152a9194c43502031e46cff72a"
+}

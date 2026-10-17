@@ -33,7 +33,7 @@
     "test:server": "jest --config jest.config.server.js",
     "prepare": "yarn run build",
     "prepack": "yarn run build:server && cd ../.. && bash build_ios_core.sh && bash scripts/verify-ios-core-generation.sh && bash scripts/prepack-cli.sh",
-    "postpack": "rm -rf cli",
+    "postpack": "node ../../scripts/cli-artifacts.cjs postpack",
     "prepublishOnly": "cd ../.. && yarn run build:core",
     "format:android": "google-java-format --replace -i $(find . -type f -name \"*.java\" ! -path \"*/node_modules/*\" ! -path \"*/generated/*\")",
     "format:android:check": "google-java-format --set-exit-if-changed --replace -i $(find . -type f -name \"*.java\" ! -path \"*/node_modules/*\" ! -path \"*/generated/*\")",
@@ -56,13 +56,14 @@
     "react-native": "0.85.3",
     "rimraf": "^3.0.2",
     "ts-jest": "^29.2.5",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "xcode": "^3.0.1"
   },
   "optionalDependencies": {
     "chalk": "^4.1.0",
     "commander": "^12.0.0",
     "plist": "^3.1.0",
-    "xcode": "^3.0.1"
+    "simple-plist": "^1.3.1"
   },
   "peerDependencies": {
     "expo": "*",
@@ -131,6 +132,8 @@
     "/server/tsconfig.json",
     "/server/package.json",
     "/cli/dist",
-    "/cli/bin"
+    "/cli/bin",
+    "/cli/vendor",
+    "/cli/package.json"
   ]
 }

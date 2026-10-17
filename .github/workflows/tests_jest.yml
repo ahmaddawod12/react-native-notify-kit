@@ -19,9 +19,13 @@ concurrency:
 
 jobs:
   jest:
-    name: Jest
+    name: Jest (Node ${{ matrix.node }})
     timeout-minutes: 50
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.14.0', '24']
     steps:
       - uses: actions/checkout@v5
         with:
@@ -30,7 +34,7 @@ jobs:
         run: corepack enable
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: 'yarn'
       - name: Yarn Install
         uses: nick-fields/retry@v4
@@ -46,3 +50,11 @@ jobs:
           # React is installed in the smoke workspace; Jest runs from packages/react-native.
           NODE_PATH: ${{ github.workspace }}/apps/smoke/node_modules
         run: yarn tests_rn:test
+      - name: Server SDK
+        run: yarn tests_rn:test-server --runInBand
+      - name: CLI compatibility
+        run: yarn workspace @react-native-notify-kit/cli test --runInBand
+      - name: Build orchestration and release networking
+        run: yarn test:build-tooling && yarn test:release-network
+      - name: CLI artifact isolation
+        run: yarn test:cli-artifacts

@@ -1,6 +1,16 @@
 const path = require('path');
 
-const reactNativePaths = ['ios', 'android', 'packages/react-native', 'build_ios_core.sh'];
+// Include sources used only while staging the npm package, as well as files
+// already inside the published workspace.
+const reactNativePaths = [
+  'ios',
+  'android',
+  'packages/react-native',
+  'packages/cli',
+  'build_ios_core.sh',
+  'scripts/prepack-cli.sh',
+  'scripts/cli-artifacts.cjs',
+];
 
 Object.keys(require.cache)
   .filter(m => path.posix.normalize(m).endsWith('/node_modules/git-log-parser/src/index.js'))
@@ -10,9 +20,10 @@ Object.keys(require.cache)
       // set the `_` "raw value(s)" param of git-log-parser config to be an array
       // of raw values containing whatever is in there now, along with our filter paths
       // at the end so we only get git-log for those paths
-      if (Array.isArray(config._)) config._ = config._.concat(reactNativePaths);
-      else if (config._) config._ = [config._, ...reactNativePaths];
-      else config._ = reactNativePaths;
+      const raw = Array.isArray(config._) ? config._ : config._ ? [config._] : [];
+      // Some historical paths no longer exist in a clean checkout. Without
+      // this delimiter Git treats them as revisions and the parser drops commits.
+      config._ = [...raw, ...(raw.includes('--') ? [] : ['--']), ...reactNativePaths];
       return parse(config, options);
     };
   });

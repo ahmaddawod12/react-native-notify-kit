@@ -12,7 +12,7 @@ Fork of [invertase/notifee](https://github.com/invertase/notifee), published as 
 
 ## Project Structure
 
-Monorepo managed with **Lerna + Yarn Workspaces**. Detailed guidance in sub-files:
+Monorepo managed with **Yarn 4 Workspaces**. Detailed guidance in sub-files:
 
 - `packages/react-native/CLAUDE.md` — TypeScript API, validators, types, native bridge, Android core + bridge
 - `ios/CLAUDE.md` — Native iOS core (Objective-C)
@@ -22,19 +22,30 @@ Monorepo managed with **Lerna + Yarn Workspaces**. Detailed guidance in sub-file
 ### Build
 
 ```bash
+yarn prepare                    # Prepare workspace packages, then generate iOS core
 yarn build:all                  # Build everything (core + RN)
+yarn build:all:clean            # Remove generated root/workspace build outputs
 yarn build:core:ios             # ./build_ios_core.sh (copies to packages/react-native/ios)
 yarn build:rn                   # TypeScript compilation (packages/react-native)
 yarn build:rn:watch             # Watch mode for TS development
 ```
 
+`yarn prepare` and `yarn build:all:clean` use Yarn's bundled `workspaces foreach`
+with topological ordering across regular and development workspace dependencies.
+The root workspace is explicitly excluded to prevent recursive `prepare` calls;
+workspaces without the selected script are skipped. Failures stop dependent
+builds and prevent the subsequent iOS generation step. No extra Yarn plugin or
+build cache is required. Yarn 4 install does not invoke `prepare`; run it explicitly
+when compiled workspace outputs are needed.
+
 ### Test
 
 ```bash
+yarn test:build-tooling          # Workspace scheduling and release-path regression tests
 yarn tests_rn:test              # Jest unit tests
 yarn tests_rn:test-watch        # Jest watch mode
 yarn tests_rn:test-coverage     # Jest with coverage
-yarn test:core:android          # Android JUnit tests (via smoke app Gradle)
+yarn test:core:android          # Android JUnit tests (via smoke app Gradle; JDK 21)
 yarn smoke:android              # Run smoke app on Android device/emulator
 yarn smoke:ios                  # Run smoke app on iOS simulator
 ```
@@ -105,7 +116,7 @@ After modifying native core code, you MUST rebuild before testing:
 - **Android**: compileSdk 35, minSdk 24, targetSdk 35, Java 17, AGP 8.12.0 (managed by `@react-native/gradle-plugin` version catalog — verify via the plugin before trusting this file)
 - **iOS**: Deployment target iOS 15.1+, Objective-C++
 - **React Native**: >=0.73.0 (New Architecture only, peer dependency)
-- **Node/Yarn**: Yarn 4.6.0, Node >=22, no package-lock (npm disabled)
+- **Node/Yarn**: Yarn 4.6.0, Node ^22.14.0 or >=24.10.0, no package-lock (npm disabled)
 
 ## Code Style
 
@@ -117,7 +128,7 @@ After modifying native core code, you MUST rebuild before testing:
 
 ## Release Process
 
-Release configuration is defined via semantic-release (`.releaserc`) and path-filtered to React Native changes only (`.releaserc.react-native-path-filter.js`). This fork does not currently include a dedicated GitHub Actions publish workflow.
+Release configuration is defined via semantic-release (`.releaserc`) and path-filtered to React Native, CLI, and package staging source changes (`.releaserc.react-native-path-filter.js`). This fork does not currently include a dedicated GitHub Actions publish workflow.
 
 ## Commit Conventions
 

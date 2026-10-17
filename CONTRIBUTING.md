@@ -39,30 +39,48 @@ PRs that modify NotifeeCore should:
 - **`android/`** — NotifeeCore Android (Java)
 - **`ios/`** — NotifeeCore iOS (Objective-C)
 - **`apps/smoke/`** — React Native 0.84 smoke test app for manual testing
-- Monorepo managed with **Yarn 4 + Lerna**
+- Monorepo managed with **Yarn 4 Workspaces**
 
 ## Development setup
 
 ### Prerequisites
 
-- Node >= 22
+- Node ^22.14.0 or >=24.10.0 (see the root `engines` contract)
 - Yarn 4.6.0 (corepack-managed)
-- Java 17
+- Java 21 for Android JUnit tests (the library targets Java 17 bytecode)
 - Xcode 15+ (iOS)
 - Android SDK with API 35
 
 ### Install and build
 
 ```bash
-yarn install
+yarn install --immutable
+yarn prepare            # Prepare workspace packages and generate the iOS core copy
 yarn build:all          # Build everything (native core + TypeScript)
 ```
+
+Workspace preparation and cleaning use the `workspaces foreach` command bundled
+with Yarn 4. Scripts run in dependency order, including development dependencies;
+workspaces without the requested script are skipped. The root workspace is
+excluded from the traversal so its `prepare` script cannot call itself. A failed
+workspace stops its dependents and prevents iOS core generation. Yarn install
+does not run `prepare`, so run it explicitly when you need compiled output.
+
+Use `yarn build:all:clean` to remove generated root and package build outputs,
+then `yarn prepare` to rebuild. No separate build cache or Yarn plugin is needed.
 
 ### Run tests
 
 ```bash
 yarn test:all           # Jest + Android JUnit
+yarn test:build-tooling # Workspace scheduling and release-path regression tests
 ```
+
+The tooling regression tests create isolated temporary workspaces to verify
+regular and development dependency ordering, failure propagation, root exclusion,
+clean rebuilds, incremental preparation, and idempotence. Packaging tests that
+invoke lifecycle scripts should also run in a scratch checkout because `prepack`
+stages generated files and `postpack` removes that staging directory.
 
 ### Smoke app
 
