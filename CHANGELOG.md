@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [10.9.0] - 2026-10-17
+
 ### Added
 
 - **Android**: add the default-disabled `notification.android.foregroundServiceBestEffortStopAfterMs` option for a single `dataSync` foreground run on API 35+ (60,000–18,000,000 integer milliseconds). An internal inexact alarm attempts REMOVE demotion and selective stopping after the first successful promotion; same-ID updates preserve the deadline. The distinct best-effort `FG_RUN_LIMIT_REACHED = 10` event reports native handling without certifying AMS teardown or JavaScript cancellation. Scheduling/storage failures remain observable in native diagnostics. Delivery can be late or absent, and effectiveness against vivo/iQOO/OEM timeout crashes is unproven.

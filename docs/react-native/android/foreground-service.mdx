@@ -43,7 +43,7 @@ Calling `stopForegroundService()` stops the active service and removes its notif
 the call is a no-op. Duplicate STOP calls are safe, and the library does not cold-start a `ForegroundService` just to stop it.
 
 On Android 12+ (API 31+), a `ForegroundServiceStartNotAllowedException` in the defensive terminal STOP/null path is handled
-non-fatally. The unreleased fix for [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81) also automatically
+non-fatally. The 10.8.1 fix for [Issue #81](https://github.com/marcocrupi/react-native-notify-kit/issues/81) also automatically
 handles a narrow START case: after process death, Android may retry or redeliver
 a START that the new process no longer tracks. If the command carries Android's RETRY/REDELIVERY flags and a valid request
 ID, and no foreground state or service runner has been acquired, denial of the initial `startForeground()` promotion is
